@@ -27,7 +27,6 @@ export function mergeManualEvidence(
           'artifactSha256',
           'reviewed',
           'rows',
-          'externalRows',
         ].includes(key),
     )
   )
@@ -42,21 +41,6 @@ export function mergeManualEvidence(
     rows.set(id, structuredClone(record));
   }
   const seen = new Set();
-  if (attestation.externalRows !== undefined) {
-    if (
-      !Array.isArray(attestation.externalRows) ||
-      attestation.externalRows.length > 4
-    )
-      throw new Error('MANUAL_EXTERNAL_INVALID');
-    for (const record of attestation.externalRows) {
-      validateEvidence(record, sourceSha);
-      if (record.platform !== 'wsl' || record.artifactSha256 !== artifactSha256)
-        throw new Error('MANUAL_EXTERNAL_INVALID');
-      const id = `${record.platform}-${record.arch}-${record.node}`;
-      if (rows.has(id)) throw new Error('MANUAL_BASE_DUPLICATE');
-      rows.set(id, structuredClone(record));
-    }
-  }
   for (const item of attestation.rows) {
     if (
       !item ||

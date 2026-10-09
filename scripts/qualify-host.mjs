@@ -200,14 +200,12 @@ try {
     run('config-races', 'scripts/qualify-config-race.mjs');
     run('terminal-ui', 'scripts/qualify-ui.mjs');
   }
-  const wsl =
-    process.platform === 'linux' &&
-    /microsoft|wsl/i.test(await readFile('/proc/sys/kernel/osrelease', 'utf8'));
+  // WSL has no qualification path; its output must not be recorded as Linux.
   if (
-    wsl &&
-    !/wsl2/i.test(await readFile('/proc/sys/kernel/osrelease', 'utf8'))
+    process.platform === 'linux' &&
+    /microsoft|wsl/i.test(await readFile('/proc/sys/kernel/osrelease', 'utf8'))
   )
-    throw new Error('WSL2_REQUIRED');
+    throw new Error('WSL_NOT_QUALIFIED');
   const value = {
     schemaVersion: 1,
     sourceSha: sha.stdout.trim(),
@@ -216,10 +214,10 @@ try {
     node: process.version,
     claude: '2.1.294',
     engine: pkg.dependencies['@redact-secret/core'],
-    platform: wsl ? 'wsl' : process.platform,
+    platform: process.platform,
     arch: process.arch,
     emulated: false,
-    environment: wsl ? 'wsl2' : 'native',
+    environment: 'native',
     gates,
     gateCodes,
   };

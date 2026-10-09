@@ -34,10 +34,10 @@ export function validateEvidence(value, sourceSha) {
     !['v22.16.0', 'v24.21.0'].includes(value.node) ||
     value.claude !== '2.1.294' ||
     value.engine !== '0.1.0-beta.14' ||
-    !['darwin', 'linux', 'win32', 'wsl'].includes(value.platform) ||
+    !['darwin', 'linux', 'win32'].includes(value.platform) ||
     !['x64', 'arm64'].includes(value.arch) ||
     value.emulated !== false ||
-    value.environment !== (value.platform === 'wsl' ? 'wsl2' : 'native') ||
+    value.environment !== 'native' ||
     !value.gates ||
     !value.gateCodes ||
     Object.keys(value).some(

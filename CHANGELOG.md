@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Removed the WSL2 qualification harness, release-gate rows and external-row attestations; WSL is documented as having no qualification path. Qualification hosts reject WSL instead of recording it as Linux.
 - Added coalesced same-session settings/scanner recovery through `/redacton`, preserving approved configuration and rejecting stale readiness writes.
 - Kept selected event limits, policy blocking, cancellation and queue refusal local to the event; systemic helper/engine/protocol failures require a successful bounded self-check.
 - Required local composer authority for disabling protection and opening configuration; made inactive command stubs and installer messages explicit about absent interception and unsupported Cowork.

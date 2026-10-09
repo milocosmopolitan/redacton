@@ -88,13 +88,13 @@
       "arch": "x64",
       "libc": "gnu",
       "addon": "node-linux-x64-gnu",
-      "scope": "target",
+      "scope": "follow-up",
       "nodeMajors": [
         22,
         24
       ],
       "qualification": "unqualified",
-      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+      "blocker": "no-qualification-path-use-linux-installer-inside-wsl"
     },
     {
       "id": "wsl2-arm64",
@@ -102,13 +102,13 @@
       "arch": "arm64",
       "libc": "gnu",
       "addon": "node-linux-arm64-gnu",
-      "scope": "target",
+      "scope": "follow-up",
       "nodeMajors": [
         22,
         24
       ],
       "qualification": "unqualified",
-      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+      "blocker": "no-qualification-path-use-linux-installer-inside-wsl"
     },
     {
       "id": "linux-musl-x64",

@@ -90,7 +90,7 @@ await mkdir('qualification/results/manual-review-provenance', {
 });
 await writeFile(
   'qualification/results/manual-review-provenance/review.json',
-  `${JSON.stringify({ schemaVersion: 1, sourceSha, artifactSha256, reviewer: process.env.GITHUB_ACTOR, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, node22Run: process.env.NODE22_RUN, node24Run: process.env.NODE24_RUN, attestationSha256: createHash('sha256').update(JSON.stringify(attestation)).digest('hex'), overrides: attestation.rows.map((row) => ({ platform: row.platform, arch: row.arch, node: row.node, gates: Object.keys(row.gates).sort() })), externalRows: (attestation.externalRows ?? []).map((row) => ({ platform: row.platform, arch: row.arch, node: row.node })) }, null, 2)}\n`,
+  `${JSON.stringify({ schemaVersion: 1, sourceSha, artifactSha256, reviewer: process.env.GITHUB_ACTOR, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, node22Run: process.env.NODE22_RUN, node24Run: process.env.NODE24_RUN, attestationSha256: createHash('sha256').update(JSON.stringify(attestation)).digest('hex'), overrides: attestation.rows.map((row) => ({ platform: row.platform, arch: row.arch, node: row.node, gates: Object.keys(row.gates).sort() })) }, null, 2)}\n`,
 );
 console.log(
   JSON.stringify({
