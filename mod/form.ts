@@ -26,6 +26,8 @@ export interface RuleForm {
   editingId: string | null;
   namesGroupAction: boolean;
   resetScope: 'personal' | 'project' | null;
+  tab: 'rules' | 'storage' | 'transfer';
+  details: boolean;
 }
 export function freshForm(): RuleForm {
   return {
@@ -46,6 +48,8 @@ export function freshForm(): RuleForm {
     editingId: null,
     namesGroupAction: false,
     resetScope: null,
+    tab: 'rules',
+    details: false,
   };
 }
 export function formRule(form: RuleForm): CustomRule | null {

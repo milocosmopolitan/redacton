@@ -1,6 +1,7 @@
 import type {
   EngineInterface,
   On,
+  RenderChildren,
   ToolCallInput,
   ToolCallResult,
 } from 'claude-code';
@@ -314,6 +315,16 @@ async function ensurePersonal(
     if (runtime.personalPromise === work) runtime.personalPromise = null;
   }
 }
+
+const ALPHABETS: readonly TokenRule['alphabet'][] = [
+  'alnum',
+  'alnum-dash',
+  'alnum-dash-dot',
+  'upper-alnum',
+  'digit',
+  'lower-hex',
+  'base64-body',
+];
 
 async function focusLocal(
   $: EngineInterface,
@@ -634,7 +645,33 @@ export function register(on: On) {
     { component: 'Pane', requestId: 'redact-config' },
     ($, e, next) => {
       if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e);
-      const { Box, Text, Input, Button } = $.ui.resolve(e);
+      const { Box, Text, Input, Select, Button } = $.ui.resolve(e);
+      // The terminal tree stays as qualified; only the desktop is restyled.
+      const desktop = e.surface === 'desktop';
+      const tab = (name: RuleForm['tab']) => !desktop || form.tab === name;
+      const row = desktop ? { gap: 1, flexWrap: 'wrap' as const } : {};
+      const primary = desktop ? { variant: 'primary' as const } : {};
+      const Card = ({
+        title,
+        children,
+      }: {
+        title?: string;
+        children?: RenderChildren;
+      }) =>
+        desktop ? (
+          <Box
+            flexDirection="column"
+            gap={1}
+            borderStyle="round"
+            paddingX={1}
+            paddingY={1}
+          >
+            {title ? <Text bold>{title}</Text> : null}
+            {children}
+          </Box>
+        ) : (
+          <Box flexDirection="column">{children}</Box>
+        );
       const owner = config;
       const formOwner = form;
       const sessionOwner = state;
@@ -672,392 +709,842 @@ export function register(on: On) {
         sessionOwner === state &&
         formOwner === form &&
         paneOpen;
+      const setKind = (choice: RuleForm['kind']) => {
+        if (!validOwner()) return;
+        form.kind = choice;
+        form.namesGroupAction = false;
+        if (form.kind === 'names') form.action = sharedNamesAction(active);
+        changed();
+      };
+      const setAction = (choice: RuleForm['action']) => {
+        if (!validOwner()) return;
+        form.action = choice;
+        if (form.kind === 'names') form.namesGroupAction = true;
+        changed();
+      };
+      const setAlphabet = (choice: TokenRule['alphabet']) => {
+        if (!validOwner()) return;
+        form.alphabet = choice;
+        changed();
+      };
+      const setRunKind = (choice: RuleForm['runKind']) => {
+        if (!validOwner()) return;
+        form.runKind = choice;
+        changed();
+      };
+      const setSpecificity = (choice: RuleForm['specificity']) => {
+        if (!validOwner()) return;
+        form.specificity = choice;
+        changed();
+      };
+      const setValidator = (choice: RuleForm['validator']) => {
+        if (!validOwner()) return;
+        form.validator = choice;
+        changed();
+      };
       return (
-        <Box flexDirection="column">
-          <Text>
-            {!state.requestedProtection
-              ? '⚠ Redacton OFF · credentials may reach Claude unchanged'
-              : `Redacton ON · Protect ${state.readiness} · Partial coverage`}
-          </Text>
-          <Text>
-            Supported: prompt text/context, Read text, Bash stdout/stderr.
-            Unprotected: Grep, Glob paths, WebFetch, Write arguments/effects,
-            MCP, other tools and existing history. Encoded/base64 credentials
-            can be missed.
-          </Text>
-          <Text>{`Configuration ${active.revision} · ${active.source}/${active.scope} · custom rules ${active.rules.length}. Built-in credentials remain enabled. Zero findings is not a safety guarantee.`}</Text>
-          <Text>
-            {e.props.isFocused
-              ? 'Local panel has keyboard focus. Type only in labeled fields.'
-              : 'WARNING: local panel is not focused. Do not type patterns into the composer. Focus this panel before editing.'}
-          </Text>
-          <Text>
-            Local declarative patterns only. Never enter a credential or exact
-            secret. Nothing is saved until an explicit Save.
-          </Text>
-          <Text>{runtime.settingsCode}</Text>
-          <Box>
-            <Button
-              key="edit-add"
-              onPress={() => {
-                if (!validOwner()) return;
-                form = freshForm();
-                form.mode = 'add';
-                update();
-              }}
-            >
-              Add rule
-            </Button>
-            <Button
-              key="edit-remove"
-              onPress={async () => {
-                if (!validOwner()) return;
-                form = freshForm();
-                form.mode = 'remove';
-                update();
-                const first = active.rules[0];
-                if (first)
-                  await focusLocal($, {
-                    requestId: 'redact-config',
-                    key: `remove-${first.id}`,
-                  });
-              }}
-            >
-              Remove rule
-            </Button>
-            <Button
-              key="revert"
-              onPress={async () => {
-                if (!validOwner() || form.busy) return;
-                const result = owner.revert(active.revision);
-                form.notice = result.ok
-                  ? 'Reverted to previous configuration.'
-                  : result.code;
-                if (result.ok && state.requestedProtection)
-                  await checkReadiness($, sessionOwner, runtime, result.config);
-                if (!validOwner()) return;
-                update();
-              }}
-            >
-              Revert
-            </Button>
-            <Button key="cancel" onPress={close}>
-              Cancel / close
-            </Button>
-          </Box>
-          <Text>{form.notice}</Text>
-          <Text>
-            Editing any inherited custom rule creates a session override.
-            Personal and project files stay unchanged until explicit scoped
-            Save.
-          </Text>
-          <Box>
-            {active.rules.map((rule) => (
-              <Button
-                key={`edit-${rule.id}`}
-                onPress={async () => {
-                  if (!validOwner() || form.busy) return;
-                  const pending = owner.currentDraft();
-                  if (pending) owner.cancel(pending.token);
-                  form = populateForm(rule);
-                  form.notice = `Editing custom rule ${rule.id} as a session override. Validate, preview, Apply.`;
-                  update();
-                  await focusLocal($, {
-                    requestId: 'redact-config',
-                    key: 'rule-id',
-                  });
-                }}
-              >{`Edit ${rule.id}`}</Button>
-            ))}
-          </Box>
-          {form.mode === 'add' ? (
-            <Box flexDirection="column">
-              <Button
-                key="kind"
-                onPress={() => {
-                  if (!validOwner()) return;
-                  form.kind = form.kind === 'token' ? 'names' : 'token';
-                  form.namesGroupAction = false;
-                  if (form.kind === 'names')
-                    form.action = sharedNamesAction(active);
-                  changed();
-                }}
-              >{`Kind: ${form.kind}`}</Button>
-              <Input
-                key="rule-id"
-                label="Rule ID"
-                value={form.id}
-                autoFocus
-                onInput={(value) => {
-                  if (!validOwner()) return;
-                  form.id = value;
-                  changed();
-                }}
-                onSubmit={async (value) => {
-                  if (!validOwner()) return;
-                  form.id = value;
-                  changed();
-                  update();
-                  await focusLocal($, {
-                    requestId: 'redact-config',
-                    key: form.kind === 'token' ? 'prefix' : 'names',
-                  });
-                }}
-              />
-              <Button
-                key="action"
-                onPress={() => {
-                  if (!validOwner()) return;
-                  form.action = form.action === 'redact' ? 'block' : 'redact';
-                  if (form.kind === 'names') form.namesGroupAction = true;
-                  changed();
-                }}
-              >
-                {form.kind === 'names'
-                  ? `Action for ALL assignment-name rules: ${form.action}`
-                  : `Action: ${form.action}`}
-              </Button>
-              {form.kind === 'token' ? (
-                <Box flexDirection="column">
-                  <Input
-                    key="prefix"
-                    label="Public prefix, 3–64 bytes"
-                    value={form.prefix}
-                    onInput={(value) => {
-                      if (!validOwner()) return;
-                      form.prefix = value;
-                      changed();
-                    }}
-                    onSubmit={async (value) => {
-                      if (!validOwner()) return;
-                      form.prefix = value;
-                      changed();
-                      update();
-                      await focusLocal($, {
-                        requestId: 'redact-config',
-                        key: 'length',
-                      });
-                    }}
-                  />
-                  <Button
-                    key="alphabet"
-                    onPress={() => {
-                      if (!validOwner()) return;
-                      const alphabets: readonly TokenRule['alphabet'][] = [
-                        'alnum',
-                        'alnum-dash',
-                        'alnum-dash-dot',
-                        'upper-alnum',
-                        'digit',
-                        'lower-hex',
-                        'base64-body',
-                      ];
-                      form.alphabet =
-                        alphabets[
-                          (alphabets.indexOf(form.alphabet) + 1) %
-                            alphabets.length
-                        ] ?? 'alnum';
-                      changed();
-                    }}
-                  >{`Alphabet: ${form.alphabet}`}</Button>
-                  <Button
-                    key="run-kind"
-                    onPress={() => {
-                      if (!validOwner()) return;
-                      form.runKind =
-                        form.runKind === 'exact' ? 'at-least' : 'exact';
-                      changed();
-                    }}
-                  >{`Length mode: ${form.runKind}`}</Button>
-                  <Input
-                    key="length"
-                    label="Run length, 1–4096"
-                    value={form.length}
-                    onInput={(value) => {
-                      if (!validOwner()) return;
-                      form.length = value;
-                      changed();
-                    }}
-                    onSubmit={async (value) => {
-                      if (!validOwner()) return;
-                      form.length = value;
-                      changed();
-                      update();
-                      await focusLocal($, {
-                        requestId: 'redact-config',
-                        key: 'build',
-                      });
-                    }}
-                  />
-                  <Button
-                    key="specificity"
-                    onPress={() => {
-                      if (!validOwner()) return;
-                      form.specificity =
-                        form.specificity === 'contextual'
-                          ? 'entropy'
-                          : 'contextual';
-                      changed();
-                    }}
-                  >{`Specificity: ${form.specificity}`}</Button>
-                  <Button
-                    key="validator"
-                    onPress={() => {
-                      if (!validOwner()) return;
-                      form.validator =
-                        form.validator === 'none'
-                          ? 'trailing-lower-hex'
-                          : 'none';
-                      changed();
-                    }}
-                  >{`Validator: ${form.validator}`}</Button>
-                </Box>
-              ) : (
-                <Box flexDirection="column">
-                  <Input
-                    key="names"
-                    label="Assignment names, comma-separated (max 32)"
-                    value={form.names}
-                    onInput={(value) => {
-                      if (!validOwner()) return;
-                      form.names = value;
-                      changed();
-                    }}
-                    onSubmit={async (value) => {
-                      if (!validOwner()) return;
-                      form.names = value;
-                      changed();
-                      update();
-                      await focusLocal($, {
-                        requestId: 'redact-config',
-                        key: 'build',
-                      });
-                    }}
-                  />
-                  <Text>
-                    Names share one action across all name rules. Names apply
-                    only to contextual assignments. A name is not an exact
-                    value.
-                  </Text>
-                </Box>
+        <Box
+          flexDirection="column"
+          {...(desktop ? { gap: 1, padding: 1 } : {})}
+        >
+          {desktop ? (
+            <Card>
+              <Text bold>
+                {!state.requestedProtection
+                  ? '⚠ Redacton OFF · credentials may reach Claude unchanged'
+                  : `Redacton ON · Protect ${state.readiness} · Partial coverage`}
+              </Text>
+              <Text>
+                Partial coverage: prompt text, Read text and Bash output only.
+                Encoded credentials can be missed. Zero findings is not a safety
+                guarantee.
+              </Text>
+              {e.props.isFocused ? null : (
+                <Text bold>
+                  WARNING: local panel is not focused. Do not type patterns into
+                  the composer. Focus this panel before editing.
+                </Text>
               )}
-              <Button
-                key="build"
-                onPress={async () => {
-                  if (!validOwner()) return;
-                  const document = candidateDocument(active, form);
-                  if (!document) {
-                    form.notice = 'INVALID_CANDIDATE';
+              <Text>
+                Local declarative patterns only. Never enter a credential or
+                exact secret. Nothing is saved until an explicit Save.
+              </Text>
+              <Text
+                dimColor
+              >{`Configuration ${active.revision} · ${active.source}/${active.scope} · custom rules ${active.rules.length} · built-in credentials stay enabled`}</Text>
+              {runtime.settingsCode ? (
+                <Text>{runtime.settingsCode}</Text>
+              ) : null}
+              <Box {...row}>
+                <Button
+                  key="details"
+                  onPress={() => {
+                    if (!validOwner()) return;
+                    form.details = !form.details;
                     update();
-                    return;
-                  }
-                  owner.begin(document);
-                  form.notice = form.editingId
-                    ? 'Atomic edit draft ready. Validate with the pinned core parser.'
-                    : 'Draft ready. Validate with the pinned core parser.';
-                  update();
-                  await focusLocal($, {
-                    requestId: 'redact-config',
-                    key: 'validate',
-                  });
-                }}
-              >
-                Create draft
-              </Button>
+                  }}
+                >
+                  {form.details
+                    ? 'Hide coverage details'
+                    : 'Show coverage details'}
+                </Button>
+              </Box>
+              {form.details ? (
+                <Text>
+                  Supported: prompt text/context, Read text, Bash stdout/stderr.
+                  Unprotected: Grep, Glob paths, WebFetch, Write
+                  arguments/effects, MCP, other tools and existing history.
+                </Text>
+              ) : null}
+            </Card>
+          ) : (
+            <Box flexDirection="column">
+              <Text>
+                {!state.requestedProtection
+                  ? '⚠ Redacton OFF · credentials may reach Claude unchanged'
+                  : `Redacton ON · Protect ${state.readiness} · Partial coverage`}
+              </Text>
+              <Text>
+                Supported: prompt text/context, Read text, Bash stdout/stderr.
+                Unprotected: Grep, Glob paths, WebFetch, Write
+                arguments/effects, MCP, other tools and existing history.
+                Encoded/base64 credentials can be missed.
+              </Text>
+              <Text>{`Configuration ${active.revision} · ${active.source}/${active.scope} · custom rules ${active.rules.length}. Built-in credentials remain enabled. Zero findings is not a safety guarantee.`}</Text>
+              <Text>
+                {e.props.isFocused
+                  ? 'Local panel has keyboard focus. Type only in labeled fields.'
+                  : 'WARNING: local panel is not focused. Do not type patterns into the composer. Focus this panel before editing.'}
+              </Text>
+              <Text>
+                Local declarative patterns only. Never enter a credential or
+                exact secret. Nothing is saved until an explicit Save.
+              </Text>
+              <Text>{runtime.settingsCode}</Text>
+            </Box>
+          )}
+          {desktop ? (
+            <Box gap={1} flexWrap="wrap">
+              {(
+                [
+                  ['rules', 'Rules'],
+                  ['storage', 'Save and load'],
+                  ['transfer', 'Import and export'],
+                ] as const
+              ).map(([id, label]) => (
+                <Button
+                  key={`tab-${id}`}
+                  variant={form.tab === id ? 'primary' : 'secondary'}
+                  onPress={() => {
+                    if (!validOwner()) return;
+                    form.tab = id;
+                    update();
+                  }}
+                >
+                  {label}
+                </Button>
+              ))}
             </Box>
           ) : null}
-          {form.mode === 'remove' ? (
-            <Box flexDirection="column">
-              {active.rules.map((rule) => {
-                const impact = removalView(active, rule.id);
-                return (
-                  <Box key={rule.id}>
-                    <Text>{`${rule.id} · ${rule.kind} · ${rule.action} · ${active.source}/${active.scope}`}</Text>
+          {desktop && form.notice ? (
+            <Card>
+              <Text>{form.notice}</Text>
+            </Card>
+          ) : null}
+          {tab('rules') ? (
+            <Card title="Custom rules">
+              <Box {...row}>
+                <Button
+                  key="edit-add"
+                  onPress={() => {
+                    if (!validOwner()) return;
+                    form = freshForm();
+                    form.mode = 'add';
+                    update();
+                  }}
+                >
+                  Add rule
+                </Button>
+                <Button
+                  key="edit-remove"
+                  onPress={async () => {
+                    if (!validOwner()) return;
+                    form = freshForm();
+                    form.mode = 'remove';
+                    update();
+                    const first = active.rules[0];
+                    if (first)
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: `remove-${first.id}`,
+                      });
+                  }}
+                >
+                  Remove rule
+                </Button>
+                <Button
+                  key="revert"
+                  onPress={async () => {
+                    if (!validOwner() || form.busy) return;
+                    const result = owner.revert(active.revision);
+                    form.notice = result.ok
+                      ? 'Reverted to previous configuration.'
+                      : result.code;
+                    if (result.ok && state.requestedProtection)
+                      await checkReadiness(
+                        $,
+                        sessionOwner,
+                        runtime,
+                        result.config,
+                      );
+                    if (!validOwner()) return;
+                    update();
+                  }}
+                >
+                  Revert
+                </Button>
+                {desktop ? null : (
+                  <Button key="cancel" onPress={close}>
+                    Cancel / close
+                  </Button>
+                )}
+              </Box>
+              {desktop ? null : <Text>{form.notice}</Text>}
+              <Text>
+                Editing any inherited custom rule creates a session override.
+                Personal and project files stay unchanged until explicit scoped
+                Save.
+              </Text>
+              {desktop && !active.rules.length ? (
+                <Text dimColor>No custom rules yet. Choose Add rule.</Text>
+              ) : null}
+              <Box {...row}>
+                {active.rules.map((rule) => (
+                  <Button
+                    key={`edit-${rule.id}`}
+                    onPress={async () => {
+                      if (!validOwner() || form.busy) return;
+                      const pending = owner.currentDraft();
+                      if (pending) owner.cancel(pending.token);
+                      form = populateForm(rule);
+                      form.notice = `Editing custom rule ${rule.id} as a session override. Validate, preview, Apply.`;
+                      update();
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: 'rule-id',
+                      });
+                    }}
+                  >{`Edit ${rule.id}`}</Button>
+                ))}
+              </Box>
+              {form.mode === 'add' ? (
+                <Box flexDirection="column">
+                  {desktop ? (
+                    <Select
+                      key="kind"
+                      label="Rule kind"
+                      value={form.kind}
+                      options={[
+                        {
+                          value: 'token',
+                          label: 'Token: public prefix + shape',
+                        },
+                        { value: 'names', label: 'Assignment names' },
+                      ]}
+                      onSelect={(value) =>
+                        setKind(value === 'names' ? 'names' : 'token')
+                      }
+                    />
+                  ) : (
                     <Button
-                      key={`remove-${rule.id}`}
-                      onPress={async () => {
-                        if (!validOwner()) return;
-                        if (!impact?.removable) {
-                          form.notice =
-                            'Inherited rule is read-only. Choose Copy to session to deliberately override.';
-                          update();
-                          return;
-                        }
-                        const document = removeRule(active, rule.id);
-                        if (document) {
-                          owner.begin(document);
-                          form.notice =
-                            'Removal draft. Other rules and built-ins may still match. Validate, preview, then Apply.';
+                      key="kind"
+                      onPress={() =>
+                        setKind(form.kind === 'token' ? 'names' : 'token')
+                      }
+                    >{`Kind: ${form.kind}`}</Button>
+                  )}
+                  <Input
+                    key="rule-id"
+                    label="Rule ID"
+                    value={form.id}
+                    autoFocus
+                    onInput={(value) => {
+                      if (!validOwner()) return;
+                      form.id = value;
+                      changed();
+                    }}
+                    onSubmit={async (value) => {
+                      if (!validOwner()) return;
+                      form.id = value;
+                      changed();
+                      update();
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: form.kind === 'token' ? 'prefix' : 'names',
+                      });
+                    }}
+                  />
+                  {desktop ? (
+                    <Select
+                      key="action"
+                      label={
+                        form.kind === 'names'
+                          ? 'Action for ALL assignment-name rules'
+                          : 'Action'
+                      }
+                      value={form.action}
+                      options={[
+                        {
+                          value: 'redact',
+                          label: 'Redact (replace with placeholder)',
+                        },
+                        {
+                          value: 'block',
+                          label: 'Block (withhold the content)',
+                        },
+                      ]}
+                      onSelect={(value) =>
+                        setAction(value === 'block' ? 'block' : 'redact')
+                      }
+                    />
+                  ) : (
+                    <Button
+                      key="action"
+                      onPress={() =>
+                        setAction(form.action === 'redact' ? 'block' : 'redact')
+                      }
+                    >
+                      {form.kind === 'names'
+                        ? `Action for ALL assignment-name rules: ${form.action}`
+                        : `Action: ${form.action}`}
+                    </Button>
+                  )}
+                  {form.kind === 'token' ? (
+                    <Box flexDirection="column">
+                      <Input
+                        key="prefix"
+                        label="Public prefix, 3–64 bytes"
+                        value={form.prefix}
+                        onInput={(value) => {
+                          if (!validOwner()) return;
+                          form.prefix = value;
+                          changed();
+                        }}
+                        onSubmit={async (value) => {
+                          if (!validOwner()) return;
+                          form.prefix = value;
+                          changed();
                           update();
                           await focusLocal($, {
                             requestId: 'redact-config',
-                            key: 'validate',
+                            key: 'length',
                           });
-                        }
-                      }}
-                    >
-                      Select removal
-                    </Button>
-                  </Box>
-                );
-              })}
-              <Button
-                key="copy-session"
-                onPress={() => {
-                  if (!validOwner()) return;
-                  owner.begin(active, 'session');
-                  form.notice =
-                    'Explicit session copy. Validate, preview, Apply, then select removal.';
-                  update();
-                }}
-              >
-                Copy to session override
-              </Button>
-            </Box>
+                        }}
+                      />
+                      {desktop ? (
+                        <Select
+                          key="alphabet"
+                          label="Characters after the prefix"
+                          value={form.alphabet}
+                          options={ALPHABETS.map((value) => ({ value }))}
+                          onSelect={(value) =>
+                            setAlphabet(
+                              ALPHABETS.find((item) => item === value) ??
+                                'alnum',
+                            )
+                          }
+                        />
+                      ) : (
+                        <Button
+                          key="alphabet"
+                          onPress={() =>
+                            setAlphabet(
+                              ALPHABETS[
+                                (ALPHABETS.indexOf(form.alphabet) + 1) %
+                                  ALPHABETS.length
+                              ] ?? 'alnum',
+                            )
+                          }
+                        >{`Alphabet: ${form.alphabet}`}</Button>
+                      )}
+                      {desktop ? (
+                        <Select
+                          key="run-kind"
+                          label="Length mode"
+                          value={form.runKind}
+                          options={[
+                            { value: 'exact', label: 'Exactly this many' },
+                            { value: 'at-least', label: 'At least this many' },
+                          ]}
+                          onSelect={(value) =>
+                            setRunKind(
+                              value === 'at-least' ? 'at-least' : 'exact',
+                            )
+                          }
+                        />
+                      ) : (
+                        <Button
+                          key="run-kind"
+                          onPress={() =>
+                            setRunKind(
+                              form.runKind === 'exact' ? 'at-least' : 'exact',
+                            )
+                          }
+                        >{`Length mode: ${form.runKind}`}</Button>
+                      )}
+                      <Input
+                        key="length"
+                        label="Run length, 1–4096"
+                        value={form.length}
+                        onInput={(value) => {
+                          if (!validOwner()) return;
+                          form.length = value;
+                          changed();
+                        }}
+                        onSubmit={async (value) => {
+                          if (!validOwner()) return;
+                          form.length = value;
+                          changed();
+                          update();
+                          await focusLocal($, {
+                            requestId: 'redact-config',
+                            key: 'build',
+                          });
+                        }}
+                      />
+                      {desktop ? (
+                        <Select
+                          key="specificity"
+                          label="Specificity"
+                          value={form.specificity}
+                          options={[
+                            { value: 'contextual', label: 'Contextual' },
+                            { value: 'entropy', label: 'Entropy' },
+                          ]}
+                          onSelect={(value) =>
+                            setSpecificity(
+                              value === 'entropy' ? 'entropy' : 'contextual',
+                            )
+                          }
+                        />
+                      ) : (
+                        <Button
+                          key="specificity"
+                          onPress={() =>
+                            setSpecificity(
+                              form.specificity === 'contextual'
+                                ? 'entropy'
+                                : 'contextual',
+                            )
+                          }
+                        >{`Specificity: ${form.specificity}`}</Button>
+                      )}
+                      {desktop ? (
+                        <Select
+                          key="validator"
+                          label="Validator"
+                          value={form.validator}
+                          options={[
+                            { value: 'none', label: 'None' },
+                            {
+                              value: 'trailing-lower-hex',
+                              label: 'Trailing lowercase hex',
+                            },
+                          ]}
+                          onSelect={(value) =>
+                            setValidator(
+                              value === 'trailing-lower-hex'
+                                ? 'trailing-lower-hex'
+                                : 'none',
+                            )
+                          }
+                        />
+                      ) : (
+                        <Button
+                          key="validator"
+                          onPress={() =>
+                            setValidator(
+                              form.validator === 'none'
+                                ? 'trailing-lower-hex'
+                                : 'none',
+                            )
+                          }
+                        >{`Validator: ${form.validator}`}</Button>
+                      )}
+                    </Box>
+                  ) : (
+                    <Box flexDirection="column">
+                      <Input
+                        key="names"
+                        label="Assignment names, comma-separated (max 32)"
+                        value={form.names}
+                        onInput={(value) => {
+                          if (!validOwner()) return;
+                          form.names = value;
+                          changed();
+                        }}
+                        onSubmit={async (value) => {
+                          if (!validOwner()) return;
+                          form.names = value;
+                          changed();
+                          update();
+                          await focusLocal($, {
+                            requestId: 'redact-config',
+                            key: 'build',
+                          });
+                        }}
+                      />
+                      <Text>
+                        Names share one action across all name rules. Names
+                        apply only to contextual assignments. A name is not an
+                        exact value.
+                      </Text>
+                    </Box>
+                  )}
+                  <Button
+                    key="build"
+                    {...primary}
+                    onPress={async () => {
+                      if (!validOwner()) return;
+                      const document = candidateDocument(active, form);
+                      if (!document) {
+                        form.notice = 'INVALID_CANDIDATE';
+                        update();
+                        return;
+                      }
+                      owner.begin(document);
+                      form.notice = form.editingId
+                        ? 'Atomic edit draft ready. Validate with the pinned core parser.'
+                        : 'Draft ready. Validate with the pinned core parser.';
+                      update();
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: 'validate',
+                      });
+                    }}
+                  >
+                    Create draft
+                  </Button>
+                </Box>
+              ) : null}
+              {form.mode === 'remove' ? (
+                <Box flexDirection="column">
+                  {active.rules.map((rule) => {
+                    const impact = removalView(active, rule.id);
+                    return (
+                      <Box key={rule.id}>
+                        <Text>{`${rule.id} · ${rule.kind} · ${rule.action} · ${active.source}/${active.scope}`}</Text>
+                        <Button
+                          key={`remove-${rule.id}`}
+                          onPress={async () => {
+                            if (!validOwner()) return;
+                            if (!impact?.removable) {
+                              form.notice =
+                                'Inherited rule is read-only. Choose Copy to session to deliberately override.';
+                              update();
+                              return;
+                            }
+                            const document = removeRule(active, rule.id);
+                            if (document) {
+                              owner.begin(document);
+                              form.notice =
+                                'Removal draft. Other rules and built-ins may still match. Validate, preview, then Apply.';
+                              update();
+                              await focusLocal($, {
+                                requestId: 'redact-config',
+                                key: 'validate',
+                              });
+                            }
+                          }}
+                        >
+                          Select removal
+                        </Button>
+                      </Box>
+                    );
+                  })}
+                  <Button
+                    key="copy-session"
+                    onPress={() => {
+                      if (!validOwner()) return;
+                      owner.begin(active, 'session');
+                      form.notice =
+                        'Explicit session copy. Validate, preview, Apply, then select removal.';
+                      update();
+                    }}
+                  >
+                    Copy to session override
+                  </Button>
+                </Box>
+              ) : null}
+            </Card>
           ) : null}
-          <Text>
-            Personal defaults restore at session boundaries. Project settings
-            require explicit load and trust. Precedence: session override,
-            trusted project, personal, defaults. Project trust lasts this
-            session.
-          </Text>
-          <Box>
-            {(['personal', 'project'] as const).map((scope) => (
-              <Button
-                key={`load-${scope}`}
-                onPress={async () => {
-                  if (!validOwner() || form.busy) return;
-                  if (!state.requestedProtection) {
-                    form.notice = 'TURN_ON_TO_LOAD';
-                    update();
-                    return;
-                  }
-                  form.busy = true;
-                  const storage =
-                    scope === 'project'
-                      ? {
-                          scope,
-                          approved: false,
-                          projectRoot: await $.session.root(),
-                        }
-                      : { scope, approved: true };
-                  const response = await runSettings(
-                    $,
-                    {
-                      protocolVersion: 2,
-                      requestId: `load-${++runtime.sequence}`,
-                      operation: 'load-config',
-                      policyId: POLICY_ID,
-                      storage,
-                    },
-                    runtime,
-                  );
-                  if (validOwner()) {
-                    if (response.ok) {
-                      settings.observe(response.settings);
-                      if (scope === 'personal') {
-                        runtime.personalLoad = 'ready';
-                        runtime.settingsCode = '';
+          {tab('storage') ? (
+            <Card title="Save and load">
+              <Text>
+                Personal defaults restore at session boundaries. Project
+                settings require explicit load and trust. Precedence: session
+                override, trusted project, personal, defaults. Project trust
+                lasts this session.
+              </Text>
+              {desktop ? <Text bold>Load</Text> : null}
+              <Box {...row}>
+                {(['personal', 'project'] as const).map((scope) => (
+                  <Button
+                    key={`load-${scope}`}
+                    onPress={async () => {
+                      if (!validOwner() || form.busy) return;
+                      if (!state.requestedProtection) {
+                        form.notice = 'TURN_ON_TO_LOAD';
+                        update();
+                        return;
+                      }
+                      form.busy = true;
+                      const storage =
+                        scope === 'project'
+                          ? {
+                              scope,
+                              approved: false,
+                              projectRoot: await $.session.root(),
+                            }
+                          : { scope, approved: true };
+                      const response = await runSettings(
+                        $,
+                        {
+                          protocolVersion: 2,
+                          requestId: `load-${++runtime.sequence}`,
+                          operation: 'load-config',
+                          policyId: POLICY_ID,
+                          storage,
+                        },
+                        runtime,
+                      );
+                      if (validOwner()) {
+                        if (response.ok) {
+                          settings.observe(response.settings);
+                          if (scope === 'personal') {
+                            runtime.personalLoad = 'ready';
+                            runtime.settingsCode = '';
+                            const effective = effectiveConfiguration(
+                              settings.approvedLayers(),
+                            );
+                            if (active.scope !== 'session') {
+                              const changed = owner.replaceApproved(
+                                effective.document,
+                                effective.source,
+                                active.revision,
+                              );
+                              if (changed.ok)
+                                await checkReadiness(
+                                  $,
+                                  sessionOwner,
+                                  runtime,
+                                  changed.config,
+                                );
+                            }
+                            form.notice =
+                              'Personal settings loaded. Session overrides keep precedence.';
+                          } else {
+                            form.mode = 'project';
+                            form.notice =
+                              'Project candidate loaded, NOT active. Review rule definitions then Trust exact revision.';
+                          }
+                        } else form.notice = response.code;
+                        form.busy = false;
+                        update();
+                      }
+                    }}
+                  >{`Load ${scope}`}</Button>
+                ))}
+              </Box>
+              {form.mode === 'project' ? (
+                <Box flexDirection="column">
+                  {(() => {
+                    const reviewed = settings.loadedConfiguration('project');
+                    return reviewed ? (
+                      <Box flexDirection="column">
+                        <Text>{`Project candidate ${reviewed.revision}. Not active before trust. ${reviewed.document.rules.length} rules.`}</Text>
+                        {reviewed.document.rules.map((rule) => (
+                          <Text key={`review-${rule.id}`}>
+                            {rule.kind === 'token'
+                              ? `${rule.id}: ${rule.action}, token prefix ${rule.prefix}, alphabet ${rule.alphabet}, ${rule.run.kind} ${rule.run.length}, ${rule.specificity}, validator ${rule.validator}`
+                              : `${rule.id}: ${rule.action}, assignment names ${rule.names.join(', ')}`}
+                          </Text>
+                        ))}
+                        <Button
+                          key="trust-project"
+                          onPress={async () => {
+                            if (!validOwner() || form.busy) return;
+                            if (!state.requestedProtection) {
+                              form.notice = 'TURN_ON_TO_TRUST';
+                              update();
+                              return;
+                            }
+                            if (
+                              !settings.approveProject(
+                                reviewed.identity,
+                                reviewed.revision,
+                                reviewed.document,
+                              )
+                            ) {
+                              form.notice = 'PROJECT_REVIEW_STALE';
+                              update();
+                              return;
+                            }
+                            const effective = effectiveConfiguration(
+                              settings.approvedLayers(),
+                            );
+                            if (active.scope !== 'session') {
+                              const changed = owner.replaceApproved(
+                                effective.document,
+                                effective.source,
+                                active.revision,
+                              );
+                              if (changed.ok)
+                                await checkReadiness(
+                                  $,
+                                  sessionOwner,
+                                  runtime,
+                                  changed.config,
+                                );
+                            }
+                            form.notice =
+                              'Exact reviewed project configuration trusted for this session. Session override keeps precedence.';
+                            update();
+                          }}
+                        >
+                          Trust reviewed project
+                        </Button>
+                      </Box>
+                    ) : null;
+                  })()}
+                </Box>
+              ) : null}
+              {desktop ? <Text bold>Save</Text> : null}
+              <Box {...row}>
+                {(['personal', 'project'] as const).map((scope) => (
+                  <Button
+                    key={`save-${scope}`}
+                    onPress={async () => {
+                      if (!validOwner() || form.busy) return;
+                      if (!state.requestedProtection) {
+                        form.notice = 'TURN_ON_TO_SAVE';
+                        update();
+                        return;
+                      }
+                      const loaded = settings.loadedConfiguration(scope);
+                      const intent = settings.beginSave(scope, active);
+                      if (!loaded || !intent) {
+                        form.notice = 'LOAD_AND_REVIEW_SCOPE_FIRST';
+                        update();
+                        return;
+                      }
+                      form.busy = true;
+                      form.durableBusy = true;
+                      form.notice =
+                        'Explicit save in progress. Closing does not undo an already dispatched durable write.';
+                      update();
+                      const storage = {
+                        scope,
+                        approved: true,
+                        ...(scope === 'project'
+                          ? { projectRoot: await $.session.root() }
+                          : {}),
+                        expectedRevision: intent.expectedRevision,
+                        expectedIdentity: intent.identity,
+                        expectedDocument: loaded.document,
+                        document: intent.document,
+                      };
+                      const response = await runSettings(
+                        $,
+                        {
+                          protocolVersion: 2,
+                          requestId: `save-${++runtime.sequence}`,
+                          operation: 'save-config',
+                          policyId: POLICY_ID,
+                          storage,
+                        },
+                        runtime,
+                      );
+                      if (validOwner()) {
+                        form.notice =
+                          response.ok &&
+                          settings.saved(intent.token, response.settings)
+                            ? `Saved ${scope}. Current session override retained.`
+                            : response.ok
+                              ? 'STALE_SAVE_RECEIPT'
+                              : response.code;
+                        form.busy = false;
+                        form.durableBusy = false;
+                        update();
+                      }
+                    }}
+                  >{`Save ${scope}`}</Button>
+                ))}
+              </Box>
+              {desktop ? <Text bold>Reset</Text> : null}
+              <Box {...row}>
+                {(['personal', 'project'] as const).map((scope) => (
+                  <Button
+                    key={`reset-${scope}`}
+                    onPress={() => {
+                      if (!validOwner() || form.busy) return;
+                      form.resetScope = scope;
+                      form.notice = `Confirm reset of ${scope} only. Removes additional saved rules; built-ins and other scopes remain. Existing session override remains.`;
+                      update();
+                    }}
+                  >{`Reset ${scope}`}</Button>
+                ))}
+              </Box>
+              {form.resetScope ? (
+                <Button
+                  key="confirm-reset"
+                  onPress={async () => {
+                    if (!validOwner() || form.busy) return;
+                    if (!state.requestedProtection) {
+                      form.notice = 'TURN_ON_TO_RESET';
+                      update();
+                      return;
+                    }
+                    const scope = form.resetScope;
+                    if (!scope) return;
+                    const loaded = settings.loadedConfiguration(scope);
+                    const intent = settings.beginSave(scope, {
+                      schemaVersion: 1,
+                      rules: [],
+                    });
+                    if (!loaded || !intent) {
+                      form.notice = 'LOAD_AND_REVIEW_SCOPE_FIRST';
+                      update();
+                      return;
+                    }
+                    form.busy = true;
+                    form.durableBusy = true;
+                    const storage = {
+                      scope,
+                      approved: true,
+                      ...(scope === 'project'
+                        ? { projectRoot: await $.session.root() }
+                        : {}),
+                      expectedRevision: intent.expectedRevision,
+                      expectedIdentity: intent.identity,
+                      expectedDocument: loaded.document,
+                    };
+                    const response = await runSettings(
+                      $,
+                      {
+                        protocolVersion: 2,
+                        requestId: `reset-${++runtime.sequence}`,
+                        operation: 'reset-config',
+                        policyId: POLICY_ID,
+                        storage,
+                      },
+                      runtime,
+                    );
+                    if (validOwner()) {
+                      if (
+                        response.ok &&
+                        settings.saved(intent.token, response.settings)
+                      ) {
                         const effective = effectiveConfiguration(
                           settings.approvedLayers(),
                         );
@@ -1075,544 +1562,357 @@ export function register(on: On) {
                               changed.config,
                             );
                         }
-                        form.notice =
-                          'Personal settings loaded. Session overrides keep precedence.';
-                      } else {
-                        form.mode = 'project';
-                        form.notice =
-                          'Project candidate loaded, NOT active. Review rule definitions then Trust exact revision.';
+                        form.notice = `Reset ${scope} only. Built-ins retained.`;
+                      } else
+                        form.notice = response.ok
+                          ? 'STALE_RESET_RECEIPT'
+                          : response.code;
+                      form.busy = false;
+                      form.durableBusy = false;
+                      form.resetScope = null;
+                      update();
+                    }
+                  }}
+                >{`Confirm reset ${form.resetScope}`}</Button>
+              ) : null}
+            </Card>
+          ) : null}
+          {tab('transfer') ? (
+            <Card title="Import and export">
+              <Text>
+                Portable transfer files contain rule definitions only. Export
+                may reveal internal names or prefixes. Review before sharing; no
+                history, OFF state, matched input is exported. Never put actual
+                credentials in rule fields; unknown sensitive values cannot
+                always be recognized.
+              </Text>
+              {desktop ? <Text bold>Import</Text> : null}
+              <Box {...row}>
+                {(['personal', 'project'] as const).map((scope) => (
+                  <Button
+                    key={`import-${scope}`}
+                    onPress={async () => {
+                      if (!validOwner() || form.busy) return;
+                      if (!state.requestedProtection) {
+                        form.notice = 'TURN_ON_TO_IMPORT';
+                        update();
+                        return;
                       }
-                    } else form.notice = response.code;
-                    form.busy = false;
-                    update();
-                  }
-                }}
-              >{`Load ${scope}`}</Button>
-            ))}
-          </Box>
-          {form.mode === 'project' ? (
-            <Box flexDirection="column">
+                      form.busy = true;
+                      const storage =
+                        scope === 'project'
+                          ? {
+                              scope,
+                              approved: false,
+                              projectRoot: await $.session.root(),
+                            }
+                          : { scope, approved: true };
+                      const response = await runTransfer(
+                        $,
+                        {
+                          protocolVersion: 2,
+                          requestId: `import-${++runtime.sequence}`,
+                          operation: 'import-config',
+                          policyId: POLICY_ID,
+                          storage,
+                        },
+                        runtime,
+                      );
+                      if (validOwner()) {
+                        if (response.ok) {
+                          imports.stage(
+                            scope,
+                            response.transfer.identity,
+                            response.transfer.document,
+                          );
+                          form.notice =
+                            'Imported candidate only. Review definitions, then explicitly use reviewed import. Active configuration unchanged.';
+                        } else form.notice = response.code;
+                        form.busy = false;
+                        update();
+                      }
+                    }}
+                  >{`Import ${scope}`}</Button>
+                ))}
+              </Box>
               {(() => {
-                const reviewed = settings.loadedConfiguration('project');
-                return reviewed ? (
+                const imported = imports.snapshot();
+                return imported ? (
                   <Box flexDirection="column">
-                    <Text>{`Project candidate ${reviewed.revision}. Not active before trust. ${reviewed.document.rules.length} rules.`}</Text>
-                    {reviewed.document.rules.map((rule) => (
-                      <Text key={`review-${rule.id}`}>
+                    <Text>{`Imported ${imported.scope} candidate ${imported.token}, inactive until reviewed and applied.`}</Text>
+                    {imported.document.rules.map((rule) => (
+                      <Text key={`import-review-${rule.id}`}>
                         {rule.kind === 'token'
-                          ? `${rule.id}: ${rule.action}, token prefix ${rule.prefix}, alphabet ${rule.alphabet}, ${rule.run.kind} ${rule.run.length}, ${rule.specificity}, validator ${rule.validator}`
-                          : `${rule.id}: ${rule.action}, assignment names ${rule.names.join(', ')}`}
+                          ? `${rule.id}: ${rule.action}, prefix ${rule.prefix}, ${rule.alphabet}, ${rule.run.kind} ${rule.run.length}, ${rule.specificity}, ${rule.validator}`
+                          : `${rule.id}: ${rule.action}, names ${rule.names.join(', ')}`}
                       </Text>
                     ))}
                     <Button
-                      key="trust-project"
-                      onPress={async () => {
+                      key="approve-import"
+                      onPress={() => {
                         if (!validOwner() || form.busy) return;
-                        if (!state.requestedProtection) {
-                          form.notice = 'TURN_ON_TO_TRUST';
-                          update();
-                          return;
-                        }
                         if (
-                          !settings.approveProject(
-                            reviewed.identity,
-                            reviewed.revision,
-                            reviewed.document,
-                          )
+                          !imports.approve(imported.token, imported.document)
                         ) {
-                          form.notice = 'PROJECT_REVIEW_STALE';
+                          form.notice = 'STALE_IMPORT_REVIEW';
                           update();
                           return;
                         }
-                        const effective = effectiveConfiguration(
-                          settings.approvedLayers(),
-                        );
-                        if (active.scope !== 'session') {
-                          const changed = owner.replaceApproved(
-                            effective.document,
-                            effective.source,
-                            active.revision,
-                          );
-                          if (changed.ok)
-                            await checkReadiness(
-                              $,
-                              sessionOwner,
-                              runtime,
-                              changed.config,
-                            );
+                        const document = imports.approved(imported.token);
+                        if (document) {
+                          owner.begin(document, 'session');
+                          form.notice =
+                            'Reviewed import staged as a session draft. Validate, synthetic preview, Apply. Saving is separate.';
                         }
-                        form.notice =
-                          'Exact reviewed project configuration trusted for this session. Session override keeps precedence.';
                         update();
                       }}
                     >
-                      Trust reviewed project
+                      Use reviewed import draft
                     </Button>
                   </Box>
                 ) : null;
               })()}
-            </Box>
-          ) : null}
-          <Box>
-            {(['personal', 'project'] as const).map((scope) => (
-              <Button
-                key={`save-${scope}`}
-                onPress={async () => {
-                  if (!validOwner() || form.busy) return;
-                  if (!state.requestedProtection) {
-                    form.notice = 'TURN_ON_TO_SAVE';
-                    update();
-                    return;
-                  }
-                  const loaded = settings.loadedConfiguration(scope);
-                  const intent = settings.beginSave(scope, active);
-                  if (!loaded || !intent) {
-                    form.notice = 'LOAD_AND_REVIEW_SCOPE_FIRST';
-                    update();
-                    return;
-                  }
-                  form.busy = true;
-                  form.durableBusy = true;
-                  form.notice =
-                    'Explicit save in progress. Closing does not undo an already dispatched durable write.';
-                  update();
-                  const storage = {
-                    scope,
-                    approved: true,
-                    ...(scope === 'project'
-                      ? { projectRoot: await $.session.root() }
-                      : {}),
-                    expectedRevision: intent.expectedRevision,
-                    expectedIdentity: intent.identity,
-                    expectedDocument: loaded.document,
-                    document: intent.document,
-                  };
-                  const response = await runSettings(
-                    $,
-                    {
-                      protocolVersion: 2,
-                      requestId: `save-${++runtime.sequence}`,
-                      operation: 'save-config',
-                      policyId: POLICY_ID,
-                      storage,
-                    },
-                    runtime,
-                  );
-                  if (validOwner()) {
-                    form.notice =
-                      response.ok &&
-                      settings.saved(intent.token, response.settings)
-                        ? `Saved ${scope}. Current session override retained.`
-                        : response.ok
-                          ? 'STALE_SAVE_RECEIPT'
-                          : response.code;
-                    form.busy = false;
-                    form.durableBusy = false;
-                    update();
-                  }
-                }}
-              >{`Save ${scope}`}</Button>
-            ))}
-          </Box>
-          <Box>
-            {(['personal', 'project'] as const).map((scope) => (
-              <Button
-                key={`reset-${scope}`}
-                onPress={() => {
-                  if (!validOwner() || form.busy) return;
-                  form.resetScope = scope;
-                  form.notice = `Confirm reset of ${scope} only. Removes additional saved rules; built-ins and other scopes remain. Existing session override remains.`;
-                  update();
-                }}
-              >{`Reset ${scope}`}</Button>
-            ))}
-          </Box>
-          {form.resetScope ? (
-            <Button
-              key="confirm-reset"
-              onPress={async () => {
-                if (!validOwner() || form.busy) return;
-                if (!state.requestedProtection) {
-                  form.notice = 'TURN_ON_TO_RESET';
-                  update();
-                  return;
-                }
-                const scope = form.resetScope;
-                if (!scope) return;
-                const loaded = settings.loadedConfiguration(scope);
-                const intent = settings.beginSave(scope, {
-                  schemaVersion: 1,
-                  rules: [],
-                });
-                if (!loaded || !intent) {
-                  form.notice = 'LOAD_AND_REVIEW_SCOPE_FIRST';
-                  update();
-                  return;
-                }
-                form.busy = true;
-                form.durableBusy = true;
-                const storage = {
-                  scope,
-                  approved: true,
-                  ...(scope === 'project'
-                    ? { projectRoot: await $.session.root() }
-                    : {}),
-                  expectedRevision: intent.expectedRevision,
-                  expectedIdentity: intent.identity,
-                  expectedDocument: loaded.document,
-                };
-                const response = await runSettings(
-                  $,
-                  {
-                    protocolVersion: 2,
-                    requestId: `reset-${++runtime.sequence}`,
-                    operation: 'reset-config',
-                    policyId: POLICY_ID,
-                    storage,
-                  },
-                  runtime,
-                );
-                if (validOwner()) {
-                  if (
-                    response.ok &&
-                    settings.saved(intent.token, response.settings)
-                  ) {
-                    const effective = effectiveConfiguration(
-                      settings.approvedLayers(),
-                    );
-                    if (active.scope !== 'session') {
-                      const changed = owner.replaceApproved(
-                        effective.document,
-                        effective.source,
-                        active.revision,
-                      );
-                      if (changed.ok)
-                        await checkReadiness(
-                          $,
-                          sessionOwner,
-                          runtime,
-                          changed.config,
-                        );
-                    }
-                    form.notice = `Reset ${scope} only. Built-ins retained.`;
-                  } else
-                    form.notice = response.ok
-                      ? 'STALE_RESET_RECEIPT'
-                      : response.code;
-                  form.busy = false;
-                  form.durableBusy = false;
-                  form.resetScope = null;
-                  update();
-                }
-              }}
-            >{`Confirm reset ${form.resetScope}`}</Button>
-          ) : null}
-          <Text>
-            Portable transfer files contain rule definitions only. Export may
-            reveal internal names or prefixes. Review before sharing; no
-            history, OFF state, matched input is exported. Never put actual
-            credentials in rule fields; unknown sensitive values cannot always
-            be recognized.
-          </Text>
-          <Box>
-            {(['personal', 'project'] as const).map((scope) => (
-              <Button
-                key={`import-${scope}`}
-                onPress={async () => {
-                  if (!validOwner() || form.busy) return;
-                  if (!state.requestedProtection) {
-                    form.notice = 'TURN_ON_TO_IMPORT';
-                    update();
-                    return;
-                  }
-                  form.busy = true;
-                  const storage =
-                    scope === 'project'
-                      ? {
-                          scope,
-                          approved: false,
-                          projectRoot: await $.session.root(),
-                        }
-                      : { scope, approved: true };
-                  const response = await runTransfer(
-                    $,
-                    {
-                      protocolVersion: 2,
-                      requestId: `import-${++runtime.sequence}`,
-                      operation: 'import-config',
-                      policyId: POLICY_ID,
-                      storage,
-                    },
-                    runtime,
-                  );
-                  if (validOwner()) {
-                    if (response.ok) {
-                      imports.stage(
+              {desktop ? <Text bold>Export</Text> : null}
+              <Box {...row}>
+                {(['personal', 'project'] as const).map((scope) => (
+                  <Button
+                    key={`export-${scope}`}
+                    onPress={async () => {
+                      if (!validOwner() || form.busy) return;
+                      if (!state.requestedProtection) {
+                        form.notice = 'TURN_ON_TO_EXPORT';
+                        update();
+                        return;
+                      }
+                      const approved =
+                        scope === 'personal' ||
+                        settings.approvedLayers().project !== undefined;
+                      if (!approved) {
+                        form.notice = 'LOAD_AND_TRUST_PROJECT_FIRST';
+                        update();
+                        return;
+                      }
+                      const loaded = settings.loadedConfiguration(scope);
+                      if (!loaded) {
+                        form.notice = 'LOAD_SCOPE_FIRST';
+                        update();
+                        return;
+                      }
+                      form.busy = true;
+                      form.durableBusy = true;
+                      const storage = {
                         scope,
-                        response.transfer.identity,
-                        response.transfer.document,
+                        approved,
+                        expectedIdentity: loaded.identity,
+                        ...(scope === 'project'
+                          ? { projectRoot: await $.session.root() }
+                          : {}),
+                        document: {
+                          schemaVersion: 1 as const,
+                          rules: active.rules,
+                        },
+                      };
+                      const response = await runTransfer(
+                        $,
+                        {
+                          protocolVersion: 2,
+                          requestId: `export-${++runtime.sequence}`,
+                          operation: 'export-config',
+                          policyId: POLICY_ID,
+                          storage,
+                        },
+                        runtime,
                       );
-                      form.notice =
-                        'Imported candidate only. Review definitions, then explicitly use reviewed import. Active configuration unchanged.';
-                    } else form.notice = response.code;
-                    form.busy = false;
-                    update();
-                  }
-                }}
-              >{`Import ${scope}`}</Button>
-            ))}
-          </Box>
-          {(() => {
-            const imported = imports.snapshot();
-            return imported ? (
-              <Box flexDirection="column">
-                <Text>{`Imported ${imported.scope} candidate ${imported.token}, inactive until reviewed and applied.`}</Text>
-                {imported.document.rules.map((rule) => (
-                  <Text key={`import-review-${rule.id}`}>
-                    {rule.kind === 'token'
-                      ? `${rule.id}: ${rule.action}, prefix ${rule.prefix}, ${rule.alphabet}, ${rule.run.kind} ${rule.run.length}, ${rule.specificity}, ${rule.validator}`
-                      : `${rule.id}: ${rule.action}, names ${rule.names.join(', ')}`}
-                  </Text>
+                      if (validOwner()) {
+                        form.notice = response.ok
+                          ? `Exported ${scope} transfer.json rule definitions only. Review before sharing.`
+                          : response.code;
+                        form.busy = false;
+                        form.durableBusy = false;
+                        update();
+                      }
+                    }}
+                  >{`Export ${scope} transfer file`}</Button>
                 ))}
-                <Button
-                  key="approve-import"
-                  onPress={() => {
-                    if (!validOwner() || form.busy) return;
-                    if (!imports.approve(imported.token, imported.document)) {
-                      form.notice = 'STALE_IMPORT_REVIEW';
-                      update();
-                      return;
-                    }
-                    const document = imports.approved(imported.token);
-                    if (document) {
-                      owner.begin(document, 'session');
-                      form.notice =
-                        'Reviewed import staged as a session draft. Validate, synthetic preview, Apply. Saving is separate.';
-                    }
-                    update();
-                  }}
-                >
-                  Use reviewed import draft
-                </Button>
               </Box>
-            ) : null;
-          })()}
-          <Box>
-            {(['personal', 'project'] as const).map((scope) => (
+            </Card>
+          ) : null}
+          {desktop ? null : <Text>{form.notice}</Text>}
+          <Card title="Draft">
+            <Text>
+              {draft
+                ? `Draft ${draft.token} · ${draft.stage} · base ${draft.baseRevision}`
+                : 'No pending draft'}
+            </Text>
+            <Box {...row}>
               <Button
-                key={`export-${scope}`}
+                key="validate"
                 onPress={async () => {
-                  if (!validOwner() || form.busy) return;
+                  if (
+                    !validOwner() ||
+                    !draft ||
+                    draft.stage !== 'editing' ||
+                    form.busy
+                  )
+                    return;
                   if (!state.requestedProtection) {
-                    form.notice = 'TURN_ON_TO_EXPORT';
-                    update();
-                    return;
-                  }
-                  const approved =
-                    scope === 'personal' ||
-                    settings.approvedLayers().project !== undefined;
-                  if (!approved) {
-                    form.notice = 'LOAD_AND_TRUST_PROJECT_FIRST';
-                    update();
-                    return;
-                  }
-                  const loaded = settings.loadedConfiguration(scope);
-                  if (!loaded) {
-                    form.notice = 'LOAD_SCOPE_FIRST';
+                    form.notice = 'TURN_ON_TO_VALIDATE';
                     update();
                     return;
                   }
                   form.busy = true;
-                  form.durableBusy = true;
-                  const storage = {
-                    scope,
-                    approved,
-                    expectedIdentity: loaded.identity,
-                    ...(scope === 'project'
-                      ? { projectRoot: await $.session.root() }
-                      : {}),
-                    document: {
-                      schemaVersion: 1 as const,
-                      rules: active.rules,
-                    },
-                  };
-                  const response = await runTransfer(
+                  const response = await runHelper(
                     $,
+                    sessionOwner,
                     {
                       protocolVersion: 2,
-                      requestId: `export-${++runtime.sequence}`,
-                      operation: 'export-config',
+                      requestId: `validate-${++runtime.sequence}`,
+                      operation: 'validate-config',
                       policyId: POLICY_ID,
-                      storage,
+                      config: candidateConfiguration(
+                        draft.document,
+                        draft.token,
+                      ),
                     },
+                    undefined,
                     runtime,
                   );
                   if (validOwner()) {
-                    form.notice = response.ok
-                      ? `Exported ${scope} transfer.json rule definitions only. Review before sharing.`
-                      : response.code;
-                    form.busy = false;
-                    form.durableBusy = false;
-                    update();
-                  }
-                }}
-              >{`Export ${scope} transfer file`}</Button>
-            ))}
-          </Box>
-          <Text>{form.notice}</Text>
-          <Text>
-            {draft
-              ? `Draft ${draft.token} · ${draft.stage} · base ${draft.baseRevision}`
-              : 'No pending draft'}
-          </Text>
-          <Box>
-            <Button
-              key="validate"
-              onPress={async () => {
-                if (
-                  !validOwner() ||
-                  !draft ||
-                  draft.stage !== 'editing' ||
-                  form.busy
-                )
-                  return;
-                if (!state.requestedProtection) {
-                  form.notice = 'TURN_ON_TO_VALIDATE';
-                  update();
-                  return;
-                }
-                form.busy = true;
-                const response = await runHelper(
-                  $,
-                  sessionOwner,
-                  {
-                    protocolVersion: 2,
-                    requestId: `validate-${++runtime.sequence}`,
-                    operation: 'validate-config',
-                    policyId: POLICY_ID,
-                    config: candidateConfiguration(draft.document, draft.token),
-                  },
-                  undefined,
-                  runtime,
-                );
-                if (validOwner()) {
-                  const accepted = owner.validated(
-                    draft.token,
-                    response.status === 'ok' && response.validated === true,
-                  );
-                  form.notice = accepted
-                    ? 'Core validation passed. Run synthetic preview.'
-                    : response.status === 'ok'
-                      ? 'STALE_DRAFT'
-                      : response.errorCode;
-                  form.busy = false;
-                  update();
-                  if (accepted)
-                    await focusLocal($, {
-                      requestId: 'redact-config',
-                      key: 'preview',
-                    });
-                }
-              }}
-            >
-              Validate
-            </Button>
-            <Button
-              key="preview"
-              onPress={async () => {
-                if (
-                  !validOwner() ||
-                  !draft ||
-                  draft.stage !== 'validated' ||
-                  form.busy
-                )
-                  return;
-                if (!state.requestedProtection) {
-                  form.notice = 'TURN_ON_TO_PREVIEW';
-                  update();
-                  return;
-                }
-                form.busy = true;
-                const response = await runHelper(
-                  $,
-                  sessionOwner,
-                  {
-                    protocolVersion: 2,
-                    requestId: `preview-${++runtime.sequence}`,
-                    operation: 'preview',
-                    policyId: POLICY_ID,
-                    config: candidateConfiguration(draft.document, draft.token),
-                  },
-                  undefined,
-                  runtime,
-                );
-                if (validOwner()) {
-                  const accepted = owner.previewed(
-                    draft.token,
-                    response.status === 'ok' && response.outcomes !== undefined,
-                  );
-                  form.notice =
-                    accepted && response.status === 'ok'
-                      ? `Synthetic sample outcomes: ${response.outcomes?.map((item) => `${item.id}: positive ${item.positive.action}, negative ${item.negative.action}`).join('; ') || 'empty rules, built-ins retained'}. Samples only, not an accuracy guarantee. Inspect nonmatches and built-in overlap before Apply. No real values scanned.`
+                    const accepted = owner.validated(
+                      draft.token,
+                      response.status === 'ok' && response.validated === true,
+                    );
+                    form.notice = accepted
+                      ? 'Core validation passed. Run synthetic preview.'
                       : response.status === 'ok'
                         ? 'STALE_DRAFT'
                         : response.errorCode;
+                    form.busy = false;
+                    update();
+                    if (accepted)
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: 'preview',
+                      });
+                  }
+                }}
+              >
+                Validate
+              </Button>
+              <Button
+                key="preview"
+                onPress={async () => {
+                  if (
+                    !validOwner() ||
+                    !draft ||
+                    draft.stage !== 'validated' ||
+                    form.busy
+                  )
+                    return;
+                  if (!state.requestedProtection) {
+                    form.notice = 'TURN_ON_TO_PREVIEW';
+                    update();
+                    return;
+                  }
+                  form.busy = true;
+                  const response = await runHelper(
+                    $,
+                    sessionOwner,
+                    {
+                      protocolVersion: 2,
+                      requestId: `preview-${++runtime.sequence}`,
+                      operation: 'preview',
+                      policyId: POLICY_ID,
+                      config: candidateConfiguration(
+                        draft.document,
+                        draft.token,
+                      ),
+                    },
+                    undefined,
+                    runtime,
+                  );
+                  if (validOwner()) {
+                    const accepted = owner.previewed(
+                      draft.token,
+                      response.status === 'ok' &&
+                        response.outcomes !== undefined,
+                    );
+                    form.notice =
+                      accepted && response.status === 'ok'
+                        ? `Synthetic sample outcomes: ${response.outcomes?.map((item) => `${item.id}: positive ${item.positive.action}, negative ${item.negative.action}`).join('; ') || 'empty rules, built-ins retained'}. Samples only, not an accuracy guarantee. Inspect nonmatches and built-in overlap before Apply. No real values scanned.`
+                        : response.status === 'ok'
+                          ? 'STALE_DRAFT'
+                          : response.errorCode;
+                    form.busy = false;
+                    update();
+                    if (accepted)
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: 'apply',
+                      });
+                  }
+                }}
+              >
+                Synthetic preview
+              </Button>
+              <Button
+                key="apply"
+                {...primary}
+                onPress={async () => {
+                  if (!validOwner() || !draft || form.busy) return;
+                  const result = owner.apply(draft.token);
+                  form.notice = result.ok
+                    ? 'Applied to session. New operations capture this revision. Existing operations retain their revision.'
+                    : result.code;
+                  form = freshFormWithNotice(form.notice);
+                  const appliedForm = form;
+                  form.busy = result.ok && state.requestedProtection;
+                  if (result.ok && state.requestedProtection)
+                    await checkReadiness(
+                      $,
+                      sessionOwner,
+                      runtime,
+                      result.config,
+                    );
+                  if (
+                    owner !== config ||
+                    sessionOwner !== state ||
+                    form !== appliedForm ||
+                    !paneOpen
+                  )
+                    return;
                   form.busy = false;
                   update();
-                  if (accepted)
+                  if (result.ok)
                     await focusLocal($, {
                       requestId: 'redact-config',
-                      key: 'apply',
+                      key: result.config.rules.length
+                        ? 'edit-remove'
+                        : 'revert',
                     });
-                }
-              }}
-            >
-              Synthetic preview
-            </Button>
-            <Button
-              key="apply"
-              onPress={async () => {
-                if (!validOwner() || !draft || form.busy) return;
-                const result = owner.apply(draft.token);
-                form.notice = result.ok
-                  ? 'Applied to session. New operations capture this revision. Existing operations retain their revision.'
-                  : result.code;
-                form = freshFormWithNotice(form.notice);
-                const appliedForm = form;
-                form.busy = result.ok && state.requestedProtection;
-                if (result.ok && state.requestedProtection)
-                  await checkReadiness($, sessionOwner, runtime, result.config);
-                if (
-                  owner !== config ||
-                  sessionOwner !== state ||
-                  form !== appliedForm ||
-                  !paneOpen
-                )
-                  return;
-                form.busy = false;
-                update();
-                if (result.ok)
-                  await focusLocal($, {
-                    requestId: 'redact-config',
-                    key: result.config.rules.length ? 'edit-remove' : 'revert',
-                  });
-              }}
-            >
-              Apply session
-            </Button>
-            <Button
-              key="reset"
-              onPress={() => {
-                if (!validOwner()) return;
-                owner.begin({ schemaVersion: 1, rules: [] }, 'session');
-                form.notice =
-                  'Reset draft removes additional rules, built-ins remain. Validate, preview, Apply.';
-                update();
-              }}
-            >
-              Reset session rules
-            </Button>
-          </Box>
+                }}
+              >
+                Apply session
+              </Button>
+              <Button
+                key="reset"
+                onPress={() => {
+                  if (!validOwner()) return;
+                  owner.begin({ schemaVersion: 1, rules: [] }, 'session');
+                  form.notice =
+                    'Reset draft removes additional rules, built-ins remain. Validate, preview, Apply.';
+                  update();
+                }}
+              >
+                Reset session rules
+              </Button>
+              {desktop ? (
+                <Button key="cancel" onPress={close}>
+                  Cancel / close
+                </Button>
+              ) : null}
+            </Box>
+          </Card>
         </Box>
       );
     },

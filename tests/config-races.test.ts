@@ -311,13 +311,38 @@ test('open local panel withholds accidental composer submission even OFF; explic
   expect(fixture.operations.length).toBe(before);
   await ui.unmount();
 });
-test('local panel draws its form on the desktop surface', async ($, on) => {
-  setup(on);
+test('desktop pane groups the form into tabs and drives rule choices with selects', async ($, on) => {
+  const fixture = setup(on);
   await $.session.start(start);
   await $.command.run(localCommand('redact:add-rule'));
   const ui = await $.ui.mount({ ...pane, surface: 'desktop' });
   expect(await ui.find({ type: 'Text', text: /Redacton ON/ })).toBeDefined();
-  expect(await ui.find({ type: 'Text', text: /Local panel/ })).toBeDefined();
+  expect(await ui.find({ key: 'edit-add' })).toBeDefined();
+  expect(await ui.find({ key: 'load-personal' })).toBeUndefined();
+  expect(await ui.find({ key: 'import-personal' })).toBeUndefined();
+  await ui.press({ key: 'tab-storage' });
+  expect(await ui.find({ key: 'load-personal' })).toBeDefined();
+  expect(await ui.find({ key: 'edit-add' })).toBeUndefined();
+  await ui.press({ key: 'tab-transfer' });
+  expect(await ui.find({ key: 'import-personal' })).toBeDefined();
+  expect(await ui.find({ key: 'load-personal' })).toBeUndefined();
+  await ui.press({ key: 'tab-rules' });
+  expect(await ui.find({ key: 'kind' })).toBeDefined();
+  await ui.select({ key: 'alphabet', value: 'digit' });
+  await ui.select({ key: 'action', value: 'block' });
+  await ui.input({ key: 'rule-id', text: 'desktop-token', kind: 'change' });
+  await ui.input({ key: 'prefix', text: 'synthetic_', kind: 'change' });
+  for (const key of ['build', 'validate', 'preview', 'apply'])
+    await ui.press({ key });
+  const validated = fixture.requests.find(
+    (request) => request.operation === 'validate-config',
+  )?.config?.rules[0];
+  expect(validated?.id).toBe('desktop-token');
+  expect(validated?.action).toBe('block');
+  expect(validated?.kind === 'token' && validated.alphabet).toBe('digit');
+  expect((await $.command.run(localCommand('redact:status'))).text).toContain(
+    'desktop-token',
+  );
   await ui.unmount();
 });
 test('local panel is not drawn on unsupported surfaces', async ($, on) => {
@@ -331,6 +356,30 @@ test('local panel is not drawn on unsupported surfaces', async ($, on) => {
     drawn = false;
   }
   expect(drawn).toBe(false);
+});
+test('a prompt sent after Apply is scanned with the applied session rule', async ($, on) => {
+  const fixture = setup(on);
+  on('prompt.submit', (_$, e) => ({ text: e.text }));
+  await $.session.start(start);
+  await $.command.run(localCommand('redact:add-rule'));
+  const ui = await $.ui.mount({ ...pane, surface: 'desktop' });
+  await ui.input({ key: 'rule-id', text: 'my-token-rule', kind: 'change' });
+  await ui.input({ key: 'prefix', text: 'myr_', kind: 'change' });
+  await ui.input({ key: 'length', text: '10', kind: 'change' });
+  for (const key of ['build', 'validate', 'preview', 'apply'])
+    await ui.press({ key });
+  await ui.press({ key: 'cancel' });
+  await $.prompt.submit({
+    text: 'test: SYNTHETIC_AFTER_APPLY',
+    wait: false,
+    origin: { kind: 'composer' },
+  });
+  const scan = fixture.requests
+    .filter((request) => request.operation === 'sanitize')
+    .at(-1);
+  expect(scan?.config?.rules[0]?.id).toBe('my-token-rule');
+  expect(scan?.config?.source).toBe('session');
+  await ui.unmount();
 });
 test('panel removed by the host without ui.close never leaves composer submission blocked', async ($, on) => {
   setup(on);
