@@ -55,6 +55,8 @@ Do not copy real secrets into fixtures, commits, screenshots, issue bodies, logs
 
 ## Documentation and repository actions
 
+Decision documents use descriptive slug-only filenames, such as `docs/decisions/layered-trusted-results.md`, without numeric prefixes. Preserve immutable historical tag links.
+
 Mark planned and implemented behavior accurately. Keep ON/OFF wording consistent. Never fabricate test results, adoption, benchmarks, supported platforms, or API fields.
 
 Do not push changes, publish releases, or send third-party outreach without authorization. Repository issue creation is authorized for the initial epic/backlog task; it does not authorize unrelated communications.

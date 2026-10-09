@@ -30,7 +30,7 @@ Cancellation is checked before dispatch, after response, and before delivery. Th
 
 ## Assurance and packaging
 
-The [accepted layered-guard decision](docs/decisions/0002-layered-trusted-results.md) explains why a single catch handler is insufficient. The host can skip every failing guard or disable the plugin. Redacton cannot guarantee arbitrary host/all-guards failure is fail closed.
+The [accepted layered-guard decision](docs/decisions/layered-trusted-results.md) explains why a single catch handler is insufficient. The host can skip every failing guard or disable the plugin. Redacton cannot guarantee arbitrary host/all-guards failure is fail closed.
 
 Model payload, UI, and transcript/storage are separate boundaries. Original prompts and tool arguments can persist before interception; blocking output cannot undo execution or prior storage. No secure memory erasure is promised. See [the threat model](docs/THREAT_MODEL.md).
 

@@ -6,8 +6,8 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import * as engine from '@redact-secret/core';
-import initialCorpus from '../benchmarks/alpha1-corpus.mjs';
-import heldoutCorpus from '../benchmarks/heldout-corpus.mjs';
+import initialCorpus from '../benchmarks/credentials.ts';
+import heldoutCorpus from '../benchmarks/heldout.ts';
 import {
   ENGINE_VERSION,
   POLICY_ID,
@@ -15,12 +15,8 @@ import {
 } from '../helper/dist/core.js';
 
 const root = new URL('../', import.meta.url);
-const corpusBytes = await readFile(
-  new URL('benchmarks/alpha1-corpus.mjs', root),
-);
-const heldoutBytes = await readFile(
-  new URL('benchmarks/heldout-corpus.mjs', root),
-);
+const corpusBytes = await readFile(new URL('benchmarks/credentials.ts', root));
+const heldoutBytes = await readFile(new URL('benchmarks/heldout.ts', root));
 const corpus = [...initialCorpus, ...heldoutCorpus];
 const lockBytes = await readFile(new URL('package-lock.json', root));
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');

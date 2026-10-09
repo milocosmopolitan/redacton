@@ -13,11 +13,11 @@
       "!mod/canonical-types.ts",
       "qualification/*.mjs",
       "qualification/fixtures/**/*.ts",
-      "benchmarks/**/*.mjs",
       "package.json",
       "biome.json",
       "tsconfig.*.json",
-      "!**/.claude-plugin/types"
+      "!**/.claude-plugin/types",
+      "benchmarks/**/*.ts"
     ]
   },
   "formatter": {

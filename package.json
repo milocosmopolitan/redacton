@@ -17,7 +17,8 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "check": "npm run typecheck && npm run lint && npm test",
-    "sdk:types": "node scripts/test-mod.mjs --types"
+    "sdk:types": "node scripts/test-mod.mjs --types",
+    "benchmark": "npm run build:helper && node --experimental-strip-types scripts/assess-quality.mjs"
   },
   "engines": {
     "node": "22.x || 24.x"
