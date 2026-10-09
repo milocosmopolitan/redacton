@@ -1042,3 +1042,44 @@ test('procfs ownership parses exact PID/start despite spaces and parentheses in 
     null,
   );
 });
+
+test('Windows identity observations avoid cmdlet autoload, coalesce in flight, retry transient failure and cache success', () => {
+  const source = `import cp from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {promisify} from 'node:util';
+Object.defineProperty(process,'platform',{value:'win32'});
+process.env.SystemRoot='SYNTHETIC_WINDOWS_ROOT';
+let calls=0;let release;const observations=[];
+const fake=()=>{};
+fake[promisify.custom]=async(_file,args,options)=>{
+ calls++;observations.push({bounded:options.timeout===1000,noProfile:args.includes('-NoProfile'),noLogo:args.includes('-NoLogo'),direct:args.at(-1).includes('[System.Diagnostics.Process]::GetProcessById(')&&!args.at(-1).includes('Get-Process')});
+ if(calls===1){await new Promise(resolve=>release=resolve);return {stdout:'unknown-start'};}
+ return {stdout:'638900000000000000'};
+};
+cp.execFile=fake;syncBuiltinESMExports();
+const {SettingsStore}=await import('./helper/dist/storage.js');const store=new SettingsStore();
+const first=store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+const second=store.ownLease('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+release();const failures=await Promise.allSettled([first,second]);
+const recovered=await store.ownLease('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+const cached=await store.ownLease('dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+console.log(JSON.stringify({calls,failures:failures.every(row=>row.status==='rejected'&&row.reason.message==='SETTINGS_UNAVAILABLE'),sameStart:recovered.start===cached.start,observations}));`;
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e', source],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' },
+    },
+  );
+  assert.equal(result.status, 0);
+  const value = JSON.parse(result.stdout);
+  assert.equal(value.calls, 2);
+  assert.equal(value.failures, true);
+  assert.equal(value.sameStart, true);
+  assert.ok(
+    value.observations.every(
+      (row) => row.bounded && row.noProfile && row.noLogo && row.direct,
+    ),
+  );
+});

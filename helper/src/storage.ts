@@ -186,10 +186,11 @@ async function processStart(pid: number): Promise<string | null> {
                 'powershell.exe',
               ),
               [
+                '-NoLogo',
                 '-NoProfile',
                 '-NonInteractive',
                 '-Command',
-                `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
+                `[System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().Ticks`,
               ],
               {
                 timeout: 1000,
@@ -200,6 +201,8 @@ async function processStart(pid: number): Promise<string | null> {
             )
           : null;
     const start = result?.stdout.trim();
+    if (process.platform === 'win32' && !/^[0-9]{1,20}$/.test(start ?? ''))
+      return null;
     return start && start.length <= 128 ? start : null;
   } catch {
     return null;
@@ -532,7 +535,9 @@ export class SettingsStore {
   }
   private async ownLease(nonce: string): Promise<LeaseOwner> {
     selfStart ??= processStart(process.pid);
-    const start = await selfStart;
+    const observation = selfStart;
+    const start = await observation;
+    if (start === null && selfStart === observation) selfStart = undefined;
     if (!start) fail('SETTINGS_UNAVAILABLE');
     return {
       version: 2,

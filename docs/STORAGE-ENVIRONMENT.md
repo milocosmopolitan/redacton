@@ -13,8 +13,13 @@ ownership to the kernel boot ID and PID namespace. Before using Linux process
 metadata, the helper verifies `/proc/self/stat` reports its own Node PID; a
 host-mounted procfs exposing another PID numbering scheme is unavailable rather
 than evidence for reclaiming a live lease. Process starts come from Linux
-`/proc/<pid>/stat`, macOS `/bin/ps lstart` with fixed UTC timezone, or Windows PowerShell `Get-Process`
-StartTime UTC ticks. macOS has second-level precision; an indistinguishable reused
+`/proc/<pid>/stat`, macOS `/bin/ps lstart` with fixed UTC timezone, or Windows PowerShell direct .NET
+`System.Diagnostics.Process.GetProcessById` StartTime UTC ticks. The Windows
+probe disables logo/profile loading and avoids cmdlet/module autoloading. In-flight
+self observations coalesce; a successful start remains stable and cached, while a
+failed observation is retryable rather than poisoning the helper process cache.
+Windows stdout must be bounded numeric ticks; unknown output never proves a
+process identity. macOS has second-level precision; an indistinguishable reused
 PID conservatively stays busy. Probes have fixed timeouts of 500 ms on macOS and
 1,000 ms on Windows. Missing probes fail settings saves with a fixed unavailable
 code; they do not bypass locking.
