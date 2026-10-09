@@ -4,9 +4,9 @@ import { lstat, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const source = resolve('artifacts/redacton-alpha-1');
+const source = resolve('artifacts/redacton-0.1.0');
 const temp = await mkdtemp(join(tmpdir(), 'redacton-artifact-'));
-const extracted = join(temp, 'redacton-alpha-1');
+const extracted = join(temp, 'redacton-0.1.0');
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function checkTree(dir) {
   for (const name of await readdir(dir)) {
@@ -49,6 +49,48 @@ function helper(expectedArtifact) {
     response.findingCounts.github_token !== 1
   )
     throw new Error('HELPER_QUALIFICATION_FAILED');
+  const customText = 'ZXQ_12345678901234567890';
+  const configured = {
+    ...request,
+    protocolVersion: 2,
+    config: {
+      schemaVersion: 1,
+      revision: 'artifact-cfg',
+      source: 'session',
+      scope: 'session',
+      rules: [
+        {
+          kind: 'token',
+          id: 'corp-token',
+          action: 'redact',
+          prefix: 'ZXQ_',
+          alphabet: 'alnum',
+          run: { kind: 'exact', length: 20 },
+          specificity: 'contextual',
+          validator: 'none',
+        },
+      ],
+    },
+    segments: [...request.segments, { id: 's1', text: customText }],
+  };
+  const check = run([process.execPath, 'helper/dist/index.js'], {
+    input: JSON.stringify(configured),
+    timeout: 4000,
+  });
+  if (check.stderr !== '') throw new Error('HELPER_STDERR');
+  const reply = JSON.parse(check.stdout);
+  if (
+    reply.status !== 'ok' ||
+    reply.protocolVersion !== 2 ||
+    reply.configRevision !== configured.config.revision ||
+    reply.engineVersion !== '0.1.0-beta.14' ||
+    reply.artifact !== expectedArtifact ||
+    reply.findingCounts.github_token !== 1 ||
+    reply.findingCounts['corp-token'] !== 1 ||
+    reply.segments.length !== 2 ||
+    reply.segments[1].text !== '<SECRET_1>'
+  )
+    throw new Error('CONFIGURED_HELPER_QUALIFICATION_FAILED');
 }
 try {
   const [archiveHash, archiveName] = (
@@ -57,7 +99,7 @@ try {
     .trim()
     .split('  ');
   if (
-    archiveName !== 'redacton-alpha-1-evaluation.tar.gz' ||
+    archiveName !== 'redacton-0.1.0.tar.gz' ||
     digest(await readFile(resolve('artifacts', archiveName))) !== archiveHash
   )
     throw new Error('ARCHIVE_CHECKSUM');
@@ -141,12 +183,13 @@ try {
         'no-symlinks',
         'prebuilt-runtime-manifest',
         'bundled-native',
+        'approved-custom-config-native-and-wasm',
         'clean-install-ignore-scripts',
         'installed-native',
         'missing-addon-wasm',
         'strict-host-validation',
       ],
-      classification: 'evaluation-only',
+      classification: 'qualified-terminal',
     }),
   );
 } finally {

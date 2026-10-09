@@ -10,5 +10,6 @@ artifacts/
 /mod/canonical-types.ts
 /qualification/results/
 
-/qualification/fixtures/**/tsconfig.json
+/qualification/**/tsconfig.json
 /qualification/**/.claude-plugin/types/
+/qualification/**/__pycache__/

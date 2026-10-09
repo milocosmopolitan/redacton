@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { ConfigController } from '../../mod/config.ts';
 import type { HelperRequest, HelperResponse } from '../../mod/protocol.ts';
 import {
   ENGINE_VERSION,
   LIMITS,
   makeRequest,
   POLICY_ID,
+  utf8Bytes,
   validateProcessResponse,
 } from '../../mod/protocol.ts';
 
@@ -210,7 +212,15 @@ test('self-check has no segments, requires valid artifact and zero canonical fin
 });
 
 test('request event input and segment count limits count UTF-8 bytes', () => {
-  assert.ok(makeRequest('req', [{ id: 's0', text: 'é'.repeat(131072) }]));
+  const overhead = utf8Bytes(
+    JSON.stringify(makeRequest('req', [{ id: 's0', text: '' }])),
+  );
+  const maximum = Math.floor((LIMITS.inputBytes - overhead) / 2);
+  assert.ok(makeRequest('req', [{ id: 's0', text: 'é'.repeat(maximum) }]));
+  assert.equal(
+    makeRequest('req', [{ id: 's0', text: 'é'.repeat(maximum + 1) }]),
+    null,
+  );
   assert.equal(
     makeRequest('req', [{ id: 's0', text: 'é'.repeat(131073) }]),
     null,
@@ -235,4 +245,95 @@ test('request event input and segment count limits count UTF-8 bytes', () => {
     ),
     null,
   );
+});
+
+test('full serialized request includes escapes and configuration in the parent budget', () => {
+  const config = new ConfigController().snapshot();
+  assert.equal(
+    makeRequest('req', [{ id: 's0', text: '"'.repeat(140000) }], config),
+    null,
+  );
+  assert.equal(
+    makeRequest(
+      'req',
+      [{ id: 's0', text: 'x'.repeat(LIMITS.inputBytes) }],
+      config,
+    ),
+    null,
+  );
+  const accepted = makeRequest(
+    'req',
+    [{ id: 's0', text: 'x'.repeat(LIMITS.inputBytes - 512) }],
+    config,
+  );
+  assert.ok(accepted);
+  assert.ok(utf8Bytes(JSON.stringify(accepted)) <= LIMITS.inputBytes);
+});
+test('v2 binds exact immutable configuration revision and custom finding vocabulary', () => {
+  const config = new ConfigController(
+    {
+      schemaVersion: 1,
+      rules: [
+        {
+          kind: 'token',
+          id: 'synthetic.rule',
+          action: 'redact',
+          prefix: 'synthetic_',
+          alphabet: 'alnum',
+          run: { kind: 'exact', length: 16 },
+          specificity: 'contextual',
+          validator: 'none',
+        },
+      ],
+    },
+    'session',
+  ).snapshot();
+  const req = makeRequest(
+    'request_1',
+    [
+      { id: 's0', text: 'ordinary' },
+      { id: 's1', text: '' },
+    ],
+    config,
+  );
+  assert.ok(req);
+  const reply = {
+    ...response(),
+    protocolVersion: 2,
+    configRevision: config.revision,
+    findingCounts: { 'synthetic.rule': 1 },
+  };
+  assert.equal(check(reply, req).status, 'ok');
+  invalid(check({ ...reply, configRevision: 'other' }, req));
+  invalid(check({ ...reply, findingCounts: { 'unapproved.rule': 1 } }, req));
+  invalid(check({ ...reply, originalConfig: config }, req));
+  const preview: HelperRequest = {
+    protocolVersion: 2,
+    requestId: 'request_1',
+    policyId: POLICY_ID,
+    operation: 'preview',
+    config,
+  };
+  const metadata = {
+    protocolVersion: 2,
+    requestId: 'request_1',
+    status: 'ok',
+    engineVersion: ENGINE_VERSION,
+    policyId: POLICY_ID,
+    artifact: 'addon',
+    configRevision: config.revision,
+    outcomes: [
+      {
+        id: 'synthetic.rule',
+        positive: { detected: false, action: 'none', findingCounts: {} },
+        negative: {
+          detected: true,
+          action: 'block',
+          findingCounts: { private_key: 1 },
+        },
+      },
+    ],
+  };
+  assert.equal(check(metadata, preview).status, 'ok');
+  invalid(check({ ...metadata, configRevision: 'other' }, preview));
 });

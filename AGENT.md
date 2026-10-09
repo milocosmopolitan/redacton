@@ -43,6 +43,17 @@ If the host cannot reliably replace or withhold selected content, document the b
 - No input previews, secret hashes, raw paths, arbitrary exception text, or raw stderr in diagnostics.
 - No live credential verification, telemetry, vault/restore, or PII features in the supported scope.
 
+## Configuration rules
+
+- Settings use the single pure schema shared by Mod and helper. No SDK or engine capabilities enter imported controllers.
+- Approved layers replace complete custom lists: defaults, personal, project, session. Preserve built-ins and private-key blocking.
+- Validate with the pinned engine, show a synthetic preview, then require explicit apply. Preview is not accuracy evidence.
+- Capture exact configuration with ON/OFF. Invalid/stale edits, receipts and writes leave active settings unchanged.
+- Status reports cached readiness and observation time without helper dispatch, reinitialization or writes.
+- Keep form fields out of slash arguments, model messages and diagnostics. Do not claim host UI storage privacy without evidence.
+- Persist only approved declarative rules, never OFF or history. Project trust is exact-revision and session-local; reset clears pending callbacks and trust.
+- Pinned names rules share one detector action; reject mixed actions. No allow/warn, regex/code or exact-secret features.
+
 ## Verification
 
 Use synthetic fixtures. Run meaningful tests appropriate to the change, and report what could not run.

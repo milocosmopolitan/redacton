@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
+- Added shared typed configuration controllers, immutable operation snapshots, safe cached status views and guided rule-management stages.
+- Added explicit personal/project/session replacement semantics, project trust, atomic scoped persistence, portable import/export and revision-checked save/undo.
+- Verified the immutable 140×40 and 80×40 terminal add/visible-preview/apply/custom-tool/remove/revert/Escape workflows and OFF local rejection without helper dispatch.
+- Verified 59 Node 22 unit/helper tests, 35 SDK tests, type/lint checks and clean packaged native/WASM/configuration checks.
+- Kept Desktop and independent three-user/seven-day usability outcomes as separate uncompleted gates.
 - Added a checksum-verified installer and a two-command README quick start with Redact Secret attribution.
 - Migrated Mod and helper source to TypeScript with type/lint checks and generated helper distribution output.
 - Consolidated current architecture and developer documentation; archived package evidence remains available at its immutable release tag.

@@ -31,15 +31,15 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 archive="$staging/plugin.tar.gz"
-url='https://github.com/milocosmopolitan/redacton/releases/download/v0.1.0-alpha.1/redacton-alpha-1-evaluation.tar.gz'
-expected='d5882c7c4bb024b6565083d370bb607b74a4fb5130517b8d845d66f38c8272df'
+url='https://github.com/milocosmopolitan/redacton/releases/download/v0.1.0/redacton-0.1.0.tar.gz'
+expected='d34c3f707e30907505e4dec9189b2a29de650dba3604c4f21474f60183e63f99'
 curl --connect-timeout 10 --max-time 90 --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 "$url" -o "$archive" || fail 'Download failed. Your existing installation has been preserved.'
 actual=$(shasum -a 256 "$archive")
 [ "${actual%% *}" = "$expected" ] || fail 'Download verification failed. Your existing installation has been preserved.'
 tar -tzf "$archive" > "$staging/entries" || fail 'The download could not be opened.'
 while IFS= read -r entry; do
   case "$entry" in
-    redacton-alpha-1/*) ;;
+    redacton-0.1.0/*) ;;
     *) fail 'The download contains an unexpected path.' ;;
   esac
   case "/$entry/" in
@@ -54,12 +54,12 @@ while IFS= read -r entry; do
   esac
 done < "$staging/details"
 tar -xzf "$archive" -C "$staging" || fail 'Installation could not be unpacked.'
-[ -f "$staging/redacton-alpha-1/.claude-plugin/plugin.json" ] && [ -f "$staging/redacton-alpha-1/helper/dist/index.mjs" ] || fail 'The download is incomplete.'
+[ -f "$staging/redacton-0.1.0/.claude-plugin/plugin.json" ] && [ -f "$staging/redacton-0.1.0/helper/dist/index.js" ] || fail 'The download is incomplete.'
 if [ -e "$install_dir/current" ] || [ -L "$install_dir/current" ]; then
   previous="$install_dir/previous-$(date -u +%Y%m%dT%H%M%S)-$$"
   mv "$install_dir/current" "$previous" || fail 'Your existing installation could not be safely preserved.'
 fi
-mv "$staging/redacton-alpha-1" "$install_dir/current" || fail 'Installation failed. Your previous installation will be restored.'
+mv "$staging/redacton-0.1.0" "$install_dir/current" || fail 'Installation failed. Your previous installation will be restored.'
 previous=''
 printf '%s\n' 'Redacton is installed. Start Claude Code with:'
 printf 'claude --plugin-dir %q\n' "$install_dir/current"

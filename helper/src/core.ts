@@ -1,5 +1,13 @@
 import type { ScanAndRedactOptions } from '@redact-secret/core';
 import canonicalTypes from './canonical-types.json' with { type: 'json' };
+import type { ActiveConfiguration } from './config.js';
+import { validateConfigDocument } from './config.js';
+import {
+  compileConfiguration,
+  syntheticExamples,
+  validateLiteralSafety,
+} from './rules.js';
+import { storageOperation } from './storage.js';
 export const CANONICAL_TYPES = Object.freeze(canonicalTypes);
 export const ENGINE_VERSION = '0.1.0-beta.14';
 export const POLICY_ID = 'credentials-alpha1';
@@ -114,7 +122,11 @@ export interface Engine {
   artifact(): unknown;
   scanAndRedact(text: string, options: ScanAndRedactOptions): unknown;
 }
-export async function processRequest(value: unknown, engine: Engine) {
+async function processLegacyRequest(
+  value: unknown,
+  engine: Engine,
+  allowedTypes: ReadonlySet<string> = TYPES,
+) {
   let request: Request;
   try {
     request = validateRequest(value);
@@ -165,21 +177,26 @@ export async function processRequest(value: unknown, engine: Engine) {
       if (total > LIMITS.findings)
         return failure(request.requestId, 'FINDING_LIMIT');
       let blocked = false;
+      let privateKey = false;
       for (const finding of result.findings) {
         if (
           !record(finding) ||
           typeof finding.type !== 'string' ||
           typeof finding.action !== 'string' ||
-          !TYPES.has(finding.type) ||
+          !allowedTypes.has(finding.type) ||
           !['redact', 'block'].includes(finding.action)
         )
           return failure(request.requestId, 'POLICY_FAILURE');
-        if (finding.type === 'private_key' || finding.action === 'block')
-          blocked = true;
+        if (finding.type === 'private_key') privateKey = true;
+        if (privateKey || finding.action === 'block') blocked = true;
         findingCounts[finding.type] = (findingCounts[finding.type] ?? 0) + 1;
       }
       if (blocked)
-        return failure(request.requestId, 'PRIVATE_KEY_BLOCKED', 'blocked');
+        return failure(
+          request.requestId,
+          privateKey ? 'PRIVATE_KEY_BLOCKED' : 'RULE_BLOCKED',
+          'blocked',
+        );
       segments.push({ id: segment.id, text: result.text });
     }
     return {
@@ -197,9 +214,229 @@ export async function processRequest(value: unknown, engine: Engine) {
   }
 }
 
-export function encodeResponse(response: { requestId: string | null }) {
+export function encodeResponse(response: {
+  requestId: string | null;
+  protocolVersion?: number;
+  configRevision?: string | null;
+}) {
   const json = JSON.stringify(response);
-  return Buffer.byteLength(json, 'utf8') > LIMITS.outputBytes
-    ? JSON.stringify(failure(response.requestId, 'OUTPUT_LIMIT'))
-    : json;
+  if (Buffer.byteLength(json, 'utf8') <= LIMITS.outputBytes) return json;
+  const limited = failure(response.requestId, 'OUTPUT_LIMIT');
+  return JSON.stringify(
+    response.protocolVersion === 2
+      ? {
+          ...limited,
+          protocolVersion: 2,
+          configRevision: response.configRevision ?? null,
+        }
+      : limited,
+  );
+}
+
+function configuration(input: unknown): ActiveConfiguration {
+  if (
+    !keys(input, ['schemaVersion', 'rules', 'revision', 'source', 'scope']) ||
+    typeof input.revision !== 'string' ||
+    !ID.test(input.revision) ||
+    (input.source !== 'defaults' &&
+      input.source !== 'personal' &&
+      input.source !== 'project' &&
+      input.source !== 'session') ||
+    input.scope !== input.source
+  )
+    throw new Error('INVALID_CONFIG');
+  const document = validateConfigDocument({
+    schemaVersion: input.schemaVersion,
+    rules: input.rules,
+  });
+  return Object.freeze({
+    ...document,
+    revision: input.revision,
+    source: input.source,
+    scope: input.source,
+  });
+}
+export async function processRequest(value: unknown, engine: Engine) {
+  if (!record(value) || value.protocolVersion !== 2)
+    return processLegacyRequest(value, engine);
+  if (
+    [
+      'load-config',
+      'save-config',
+      'reset-config',
+      'import-config',
+      'export-config',
+    ].includes(String(value.operation))
+  )
+    return storageOperation(
+      value,
+      engine,
+      CANONICAL_TYPES,
+      ENGINE_VERSION,
+      POLICY_ID,
+    );
+  let config: ActiveConfiguration;
+  let requestId: string;
+  try {
+    if (
+      typeof value.requestId !== 'string' ||
+      !ID.test(value.requestId) ||
+      value.policyId !== POLICY_ID ||
+      typeof value.operation !== 'string' ||
+      !['self-check', 'sanitize', 'validate-config', 'preview'].includes(
+        value.operation,
+      ) ||
+      !keys(
+        value,
+        value.operation === 'sanitize'
+          ? [
+              'protocolVersion',
+              'requestId',
+              'operation',
+              'policyId',
+              'config',
+              'segments',
+            ]
+          : ['protocolVersion', 'requestId', 'operation', 'policyId', 'config'],
+      )
+    )
+      throw new Error('INVALID_REQUEST');
+    config = configuration(value.config);
+    requestId = value.requestId;
+  } catch {
+    return {
+      ...failure(null, 'INVALID_REQUEST'),
+      protocolVersion: 2,
+      configRevision: null,
+    };
+  }
+  const bind = <T extends { requestId: string | null }>(response: T) => ({
+    ...response,
+    protocolVersion: 2,
+    configRevision: config.revision,
+  });
+  try {
+    if (engine.VERSION !== ENGINE_VERSION)
+      return bind(failure(requestId, 'ENGINE_VERSION'));
+    await engine.initialize();
+    const artifact = engine.artifact();
+    if (artifact !== 'addon' && artifact !== 'wasm')
+      return bind(failure(requestId, 'ENGINE_UNAVAILABLE'));
+    validateLiteralSafety(config, engine);
+    const compiled = compileConfiguration(config, CANONICAL_TYPES);
+    const options = {
+      policy: compiled.policy,
+      ...(compiled.ruleset ? { ruleset: compiled.ruleset } : {}),
+      limits: {
+        maxInputBytes: LIMITS.inputBytes,
+        maxFindings: LIMITS.findings,
+      },
+    };
+    const validation = engine.scanAndRedact('', {
+      ...options,
+      ...(compiled.validationRuleset
+        ? { ruleset: compiled.validationRuleset }
+        : {}),
+    });
+    if (
+      !record(validation) ||
+      validation.text !== '' ||
+      !array(validation.findings) ||
+      validation.findings.length !== 0
+    )
+      throw new Error('ENGINE_RESPONSE');
+    if (value.operation === 'validate-config')
+      return bind({
+        protocolVersion: 2,
+        requestId,
+        status: 'ok',
+        engineVersion: ENGINE_VERSION,
+        policyId: POLICY_ID,
+        artifact,
+        validated: true,
+        ruleCount: config.rules.length,
+      });
+    if (value.operation === 'preview') {
+      let total = 0;
+      const outcomes = config.rules.map((rule) => {
+        const [positive, negative] = syntheticExamples(rule);
+        const project = (text: string) => {
+          const result = engine.scanAndRedact(text, options);
+          if (
+            !record(result) ||
+            typeof result.text !== 'string' ||
+            !array(result.findings)
+          )
+            throw new Error('ENGINE_RESPONSE');
+          total += result.findings.length;
+          if (total > LIMITS.findings) throw new Error('FINDING_LIMIT');
+          const counts: Record<string, number> = Object.create(null);
+          let blocked = false;
+          for (const finding of result.findings) {
+            if (
+              !record(finding) ||
+              typeof finding.type !== 'string' ||
+              !compiled.types.has(finding.type) ||
+              (finding.action !== 'redact' && finding.action !== 'block')
+            )
+              throw new Error('POLICY_FAILURE');
+            blocked ||=
+              finding.action === 'block' || finding.type === 'private_key';
+            counts[finding.type] = (counts[finding.type] ?? 0) + 1;
+          }
+          return {
+            detected: result.findings.length > 0,
+            action: blocked
+              ? 'block'
+              : result.findings.length
+                ? 'redact'
+                : 'none',
+            findingCounts: counts,
+          };
+        };
+        return {
+          id: rule.id,
+          positive: project(positive),
+          negative: project(negative),
+        };
+      });
+      return bind({
+        protocolVersion: 2,
+        requestId,
+        status: 'ok',
+        engineVersion: ENGINE_VERSION,
+        policyId: POLICY_ID,
+        artifact,
+        outcomes,
+      });
+    }
+    const wrapper: Engine = {
+      VERSION: engine.VERSION,
+      initialize: () => engine.initialize(),
+      artifact: () => engine.artifact(),
+      scanAndRedact: (text, legacyOptions) =>
+        engine.scanAndRedact(text, {
+          ...legacyOptions,
+          policy: compiled.policy,
+          ...(compiled.ruleset ? { ruleset: compiled.ruleset } : {}),
+        }),
+    };
+    const legacy = {
+      protocolVersion: 1,
+      requestId,
+      operation: value.operation,
+      policyId: POLICY_ID,
+      ...(value.operation === 'sanitize' ? { segments: value.segments } : {}),
+    };
+    return bind(await processLegacyRequest(legacy, wrapper, compiled.types));
+  } catch (error) {
+    const code =
+      error instanceof Error &&
+      ['ENGINE_RESPONSE', 'POLICY_FAILURE', 'FINDING_LIMIT'].includes(
+        error.message,
+      )
+        ? error.message
+        : 'INVALID_CONFIG';
+    return bind(failure(requestId, code));
+  }
 }

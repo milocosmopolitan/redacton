@@ -20,6 +20,14 @@ Credential recognition is incomplete. The measured corpus includes a base64-enco
 
 Selected ON operations should withhold content on missing dependencies, malformed/truncated output, timeout, limits, cancellation, and policy failure. Requested ON is separate from readiness. Operations capture policy once; OFF bypasses helper dispatch and visibly warns. A result block after execution cannot undo tool effects, permission decisions, or earlier storage. Original tools must execute at most once.
 
+## Configuration and local UI
+
+Internal credential formats can be sensitive even without actual credential values. The pinned baseline scanner rejects recognizable literal credentials in rule fields before activation/import/export/persistence, but unknown internal values cannot be universally recognized. Users must never paste actual credentials; saved definitions are not guaranteed secret-free. Management commands accept no arguments: the host can persist submitted slash arguments before local rejection. Local form persistence must be measured on the exact surface/version; a fixture with no observed file persistence is not a universal no-storage guarantee.
+
+A repository can supply malicious or stale project configuration. Treat it as declarative untrusted data: bound and reject unknown fields, compile through the pinned core, preserve built-ins/private-key blocking, and require exact-revision project review/trust. Rule IDs, actions, counts and opaque revisions are safe view metadata; rule bodies, raw paths and helper errors are not diagnostics. Local configuration/preview response bodies must never become model messages.
+
+Validation and synthetic preview do not measure detection accuracy. Explicit apply captures a new immutable revision for later operations; stale callbacks, saves and undo cannot overwrite concurrent work. Session reset revokes project trust and pending changes. Saved data excludes OFF, input history and recent outcomes. Atomic compare-and-replace protects against partial writes and cooperating concurrent editors; it does not defend against a compromised host or arbitrary external filesystem writer.
+
 ## Host fallback and environment limitations
 
 The measured Claude Code host can fall back to original tool output if the main hook and its catch handler both fail. Additional outer guards mitigate tested inner failures, but failure of every guard can still cross this boundary. The Mod cannot guarantee arbitrary all-guards failure is fail closed on this host. Do not turn successful guarded-path tests into an unconditional protection claim.
@@ -30,6 +38,6 @@ The pinned engine, native addons, WASM binary/glue, Node executable, and package
 
 ## Diagnostics and release gates
 
-Safe diagnostics contain fixed codes, canonical types, bounded counts, readiness/coverage, engine versions, and opaque identifiers. No previews, matched values, raw paths, raw process stderr, arbitrary exceptions, or secret hashes should be emitted. Public corpus/artifact hashes identify synthetic source artifacts only.
+Safe diagnostics contain fixed codes, canonical types, bounded counts, readiness/coverage, engine versions, and opaque identifiers. No credential previews, matched values, raw paths, raw process stderr, arbitrary exceptions, or secret hashes should be emitted. Public corpus/artifact hashes identify synthetic source artifacts only.
 
 No telemetry, credential validation, vault, restore, PII processing, or automatic outreach is added. Host telemetry/persistence remains separately unqualified. Release requires compatibility evidence with exact versions and exclusions, dependency notices and project license, private security reporting, and a documented private conduct route. Reporting-channel configuration is not a response-time or absolute-confidentiality guarantee.

@@ -129,6 +129,7 @@ try {
         HOME: process.env.HOME,
         CLAUDE_CONFIG_DIR: join(dir, 'config'),
         ANTHROPIC_API_KEY: 'synthetic-local-only',
+        REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       },

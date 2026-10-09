@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
@@ -10,7 +10,10 @@ const dir = await mkdtemp(join(tmpdir(), 'redacton-spike-'));
 const captures = [];
 let step = 0;
 const mode = process.argv[2] ?? 'bash';
-const synthetic = 'ghp_SYNTHETICREVOKED00000000000000000000';
+const custom = process.argv.includes('--custom');
+const synthetic = custom
+  ? 'syntheticcred_ABCDEF0123456789'
+  : 'ghp_SYNTHETICREVOKED00000000000000000000';
 const rootArgument = process.argv.indexOf('--plugin-root');
 const root = resolve(rootArgument >= 0 ? process.argv[rootArgument + 1] : '.');
 await writeFile(join(dir, 'synthetic.txt'), `앞 ${synthetic} 뒤\n`);
@@ -117,6 +120,7 @@ async function launch(prompt) {
         PATH: process.env.PATH,
         HOME: process.env.HOME,
         CLAUDE_CONFIG_DIR: join(dir, 'config'),
+        REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
         ANTHROPIC_API_KEY: 'synthetic-local-only',
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -141,6 +145,64 @@ async function launch(prompt) {
   return { exitCode, output, error };
 }
 try {
+  if (custom) {
+    const document = {
+      schemaVersion: 1,
+      rules: [
+        {
+          kind: 'token',
+          id: 'synthetic.rule',
+          action: 'redact',
+          prefix: 'syntheticcred_',
+          alphabet: 'alnum',
+          run: { kind: 'exact', length: 16 },
+          specificity: 'contextual',
+          validator: 'none',
+        },
+      ],
+    };
+    const helper = (request) => {
+      const result = spawnSync(
+        process.execPath,
+        [join(root, 'helper/dist/index.js')],
+        {
+          input: JSON.stringify(request),
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
+          },
+          timeout: 5000,
+        },
+      );
+      if (result.status !== 0 || result.stderr)
+        throw new Error('SYNTHETIC_CONFIG_SETUP_FAILED');
+      const response = JSON.parse(result.stdout);
+      if (response.status !== 'ok')
+        throw new Error('SYNTHETIC_CONFIG_SETUP_FAILED');
+      return response;
+    };
+    const base = { protocolVersion: 2, policyId: 'credentials-alpha1' };
+    const loaded = helper({
+      ...base,
+      requestId: 'setup-load',
+      operation: 'load-config',
+      storage: { scope: 'personal', approved: true },
+    }).settings;
+    helper({
+      ...base,
+      requestId: 'setup-save',
+      operation: 'save-config',
+      storage: {
+        scope: 'personal',
+        approved: true,
+        expectedRevision: loaded.revision,
+        expectedIdentity: loaded.identity,
+        expectedDocument: loaded.document,
+        document,
+      },
+    });
+  }
   const preflight = await launch('/redacton');
   const pluginLoaded =
     preflight.exitCode === 0 &&
@@ -156,6 +218,55 @@ try {
     );
     process.exitCode = 1;
   } else {
+    if (mode === 'commands') {
+      const commandResults = [];
+      for (const name of ['status', 'config', 'add-rule', 'remove-rule']) {
+        const response = await launch(`/redact:${name}`);
+        const invalid = await launch(
+          `/redact:${name} SYNTHETIC_LOCAL_ARGUMENT`,
+        );
+        commandResults.push({
+          name,
+          exitCode: response.exitCode,
+          local: response.output.includes(
+            name === 'status' ? 'Cached observation:' : 'Redacton local panel',
+          ),
+          invalidExitCode: invalid.exitCode,
+          argumentsRejected: invalid.output.includes('take no arguments'),
+          argumentEcho:
+            invalid.output.includes('SYNTHETIC_LOCAL_ARGUMENT') ||
+            invalid.error.includes('SYNTHETIC_LOCAL_ARGUMENT'),
+        });
+      }
+      const report = {
+        mode,
+        pluginLoaded,
+        modelRequests: captures.length,
+        commandResults,
+      };
+      console.log(JSON.stringify(report));
+      if (
+        captures.length ||
+        commandResults.some(
+          (result) =>
+            result.exitCode !== 0 ||
+            result.invalidExitCode !== 0 ||
+            !result.local ||
+            !result.argumentsRejected ||
+            result.argumentEcho,
+        )
+      )
+        process.exitCode = 1;
+      await rm(dir, { recursive: true, force: true });
+      server.close();
+      process.exit(process.exitCode ?? 0);
+    }
+    const status = custom ? await launch('/redact:status') : null;
+    if (
+      custom &&
+      (!status?.output.includes('synthetic.rule') || captures.length !== 0)
+    )
+      throw new Error('SYNTHETIC_CONFIG_NOT_RESTORED');
     const prompt =
       mode === 'off'
         ? '/redactoff'
@@ -261,6 +372,10 @@ try {
     ).length;
     const report = {
       mode,
+      custom,
+      customConfigRestored: custom
+        ? status.output.includes('synthetic.rule')
+        : null,
       pluginLoaded,
       exitCode,
       requests: captures.length,
