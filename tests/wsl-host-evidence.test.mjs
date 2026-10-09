@@ -1,10 +1,58 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { archiveTar } from '../scripts/artifact-archive.mjs';
 import { requiredGates } from '../scripts/qualification-evidence.mjs';
-import { validateWslHostExport } from '../scripts/qualify-wsl-host.mjs';
+import {
+  canonicalWslArtifactIdentity,
+  validateWslHostExport,
+} from '../scripts/qualify-wsl-host.mjs';
 
 const source = 'a'.repeat(40);
 const artifact = 'b'.repeat(64);
+test('canonical identity derives pinned source and lock and rejects altered archive bytes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'redacton-wsl-canonical-'));
+  const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  try {
+    const tar = archiveTar([
+      {
+        name: 'redacton-0.1.1/package.json',
+        data: Buffer.from('{"version":"0.1.1"}'),
+      },
+      {
+        name: 'redacton-0.1.1/PROVENANCE.json',
+        data: Buffer.from(
+          JSON.stringify({
+            schemaVersion: 1,
+            source: { commit: source, dirty: false },
+            sourceLockSha256: artifact,
+            builder: { node: 'v22.16.0', platform: 'linux', arch: 'x64' },
+          }),
+        ),
+      },
+    ]);
+    const zip = Buffer.from('checksum fixture');
+    writeFileSync(join(dir, 'redacton-0.1.1.tar.gz'), tar);
+    writeFileSync(join(dir, 'redacton-0.1.1.zip'), zip);
+    writeFileSync(
+      join(dir, 'SHA256SUMS'),
+      `${sha(tar)}  redacton-0.1.1.tar.gz\n${sha(zip)}  redacton-0.1.1.zip\n`,
+    );
+    assert.deepEqual(canonicalWslArtifactIdentity(dir, source), {
+      sourceSha: source,
+      lockSha256: artifact,
+      artifactSha256: sha(tar),
+    });
+    assert.throws(() => canonicalWslArtifactIdentity(dir, 'c'.repeat(40)));
+    writeFileSync(join(dir, 'redacton-0.1.1.zip'), 'corrupt');
+    assert.throws(() => canonicalWslArtifactIdentity(dir, source));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 function bundle() {
   return {
     schemaVersion: 1,
@@ -94,6 +142,21 @@ test('source setup failures export fixed states without publishing host records'
   assert.equal(validateWslHostExport(value, source, artifact), value);
   value.rows[0].status = 'blocked';
   assert.throws(() => validateWslHostExport(value, source, artifact));
+});
+
+test('ARM exports require explicit native ARM identity for both Node rows', () => {
+  const value = bundle();
+  for (const row of value.rows) row.record.arch = 'arm64';
+  assert.equal(validateWslHostExport(value, source, artifact, 'arm64'), value);
+  assert.throws(() => validateWslHostExport(value, source, artifact));
+  assert.throws(() => validateWslHostExport(value, source, artifact, 'arm'));
+  for (const patch of [{ arch: 'x64' }, { emulated: true }]) {
+    const invalid = structuredClone(value);
+    Object.assign(invalid.rows[1].record, patch);
+    assert.throws(() =>
+      validateWslHostExport(invalid, source, artifact, 'arm64'),
+    );
+  }
 });
 
 test('WSL configuration evidence rejects raw text and hidden helper reruns', () => {

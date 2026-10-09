@@ -30,6 +30,14 @@ on:
         description: Windows Node24 only, explicit real WSL2 full host probes (includes installation)
         type: boolean
         default: false
+      canonical_run:
+        description: ARM-only canonical Node22 builder run ID
+        type: string
+        default: ''
+      product_source:
+        description: ARM-only exact clean product commit SHA
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -172,17 +180,48 @@ jobs:
   wsl-arm-capability:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'milocosmopolitan/redacton' && inputs.target == 'wsl-arm-capability'
     runs-on: windows-11-arm
-    timeout-minutes: 5
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Verify canonical builder provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANONICAL_RUN: ${{ inputs.canonical_run }}
+          PRODUCT_SOURCE: ${{ inputs.product_source }}
+        run: |
+          try {
+            if ($env:CANONICAL_RUN -cnotmatch '^[1-9][0-9]{0,19}$' -or $env:PRODUCT_SOURCE -cnotmatch '^[a-f0-9]{40}$') { throw 'REJECTED' }
+            $run = gh api ('repos/milocosmopolitan/redacton/actions/runs/' + $env:CANONICAL_RUN) 2>$null | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $run.head_sha -ne $env:PRODUCT_SOURCE -or $run.status -ne 'completed' -or $run.conclusion -ne 'success' -or $run.event -ne 'workflow_dispatch' -or $run.repository.full_name -ne 'milocosmopolitan/redacton' -or $run.head_repository.full_name -ne 'milocosmopolitan/redacton' -or $run.path -ne '.github/workflows/qualification.yml') { throw 'REJECTED' }
+          } catch { [Console]::Error.WriteLine('CANONICAL_BUILDER_PROVENANCE_FAILED'); exit 1 }
+      - uses: actions/download-artifact@v4
+        with:
+          name: canonical-package
+          path: artifacts
+          run-id: ${{ inputs.canonical_run }}
+          repository: milocosmopolitan/redacton
+          github-token: ${{ github.token }}
       - shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/probe-wsl-arm.ps1
+        env:
+          PRODUCT_SOURCE: ${{ inputs.product_source }}
+        run: pwsh -NoProfile -NonInteractive -File scripts/probe-wsl-arm.ps1 -HostQualification
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: bounded-wsl-arm-capability-only
           path: qualification/results/wsl-arm-capability.json
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bounded-wsl-arm-external-host-evidence
+          path: qualification/results/wsl-arm-host/
           if-no-files-found: warn
           retention-days: 14

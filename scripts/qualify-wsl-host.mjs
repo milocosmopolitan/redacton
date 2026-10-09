@@ -4,12 +4,14 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readTar } from './artifact-archive.mjs';
 import { cancellationDiagnostics } from './cancellation-evidence.mjs';
 import { configRaceDiagnostics } from './config-race-evidence.mjs';
 import { faultDiagnostics } from './fault-evidence.mjs';
@@ -35,8 +37,63 @@ const exact = (value, keys) =>
   !Array.isArray(value) &&
   Object.keys(value).sort().join(',') === keys.split(',').sort().join(',');
 
-export function validateWslHostExport(value, sourceSha, artifactSha256) {
+export function canonicalWslArtifactIdentity(directory, sourceSha) {
+  if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw Error('WSL_CANONICAL_INVALID');
+  const names = readdirSync(directory);
+  const archives = names.filter((name) =>
+    /^redacton-\d+\.\d+\.\d+\.tar\.gz$/.test(name),
+  );
+  if (archives.length !== 1) throw Error('WSL_CANONICAL_INVALID');
+  const archiveName = archives[0];
+  const root = archiveName.slice(0, -7);
+  const entries = readTar(readFileSync(join(directory, archiveName)));
+  const provenance = JSON.parse(
+    entries.get(`${root}/PROVENANCE.json`).toString('utf8'),
+  );
+  const metadata = JSON.parse(
+    entries.get(`${root}/package.json`).toString('utf8'),
+  );
   if (
+    provenance.schemaVersion !== 1 ||
+    provenance.source?.commit !== sourceSha ||
+    provenance.source?.dirty !== false ||
+    !/^[a-f0-9]{64}$/.test(provenance.sourceLockSha256) ||
+    provenance.builder?.node !== 'v22.16.0' ||
+    provenance.builder?.platform !== 'linux' ||
+    provenance.builder?.arch !== 'x64' ||
+    root !== `redacton-${metadata.version}`
+  )
+    throw Error('WSL_CANONICAL_INVALID');
+  const sums = readFileSync(join(directory, 'SHA256SUMS'), 'utf8')
+    .trim()
+    .split('\n');
+  const expected = new Set([archiveName, `${root}.zip`]);
+  if (sums.length !== 2) throw Error('WSL_CANONICAL_INVALID');
+  for (const line of sums) {
+    const match = /^([a-f0-9]{64}) {2}([A-Za-z0-9.-]+)$/.exec(line);
+    if (
+      !match ||
+      !expected.delete(match[2]) ||
+      digest(join(directory, match[2])) !== match[1]
+    )
+      throw Error('WSL_CANONICAL_INVALID');
+  }
+  if (expected.size) throw Error('WSL_CANONICAL_INVALID');
+  return {
+    sourceSha,
+    lockSha256: provenance.sourceLockSha256,
+    artifactSha256: digest(join(directory, archiveName)),
+  };
+}
+
+export function validateWslHostExport(
+  value,
+  sourceSha,
+  artifactSha256,
+  architecture = 'x64',
+) {
+  if (
+    !['x64', 'arm64'].includes(architecture) ||
     !/^[a-f0-9]{40}$/.test(sourceSha) ||
     !/^[a-f0-9]{64}$/.test(artifactSha256) ||
     !exact(value, 'schemaVersion,sourceSha,artifactSha256,rows') ||
@@ -80,7 +137,7 @@ export function validateWslHostExport(value, sourceSha, artifactSha256) {
     if (
       row.record.platform !== 'wsl' ||
       row.record.environment !== 'wsl2' ||
-      row.record.arch !== 'x64' ||
+      row.record.arch !== architecture ||
       row.record.emulated !== false ||
       row.record.node !== `v${row.node}` ||
       row.record.artifactSha256 !== artifactSha256 ||
@@ -98,20 +155,35 @@ export function validateWslHostExport(value, sourceSha, artifactSha256) {
 }
 
 async function main() {
+  if (process.argv[2] === '--canonical-identity') {
+    console.log(
+      JSON.stringify(
+        canonicalWslArtifactIdentity(process.argv[3], process.argv[4]),
+      ),
+    );
+    return;
+  }
   if (process.argv[2] === '--validate-export') {
     const value = validateWslHostExport(
       JSON.parse(readFileSync(process.argv[3], 'utf8')),
       process.argv[4],
       process.argv[5],
+      process.argv[6] ?? 'x64',
     );
     console.log(JSON.stringify(value));
     return;
   }
-  const [sourceSha, lockSha256, artifactSha256, transfer] =
-    process.argv.slice(2);
+  const [
+    sourceSha,
+    lockSha256,
+    artifactSha256,
+    transfer,
+    architecture = 'x64',
+  ] = process.argv.slice(2);
   if (
     process.platform !== 'linux' ||
-    process.arch !== 'x64' ||
+    !['x64', 'arm64'].includes(architecture) ||
+    process.arch !== architecture ||
     process.getuid() === 0 ||
     !/microsoft.*wsl2/i.test(
       readFileSync('/proc/sys/kernel/osrelease', 'utf8'),
@@ -125,7 +197,7 @@ async function main() {
   const cache = join(homedir(), 'npm-cache');
   const tools = join(homedir(), 'npm-tools');
   const nodeFor = (version) =>
-    join(homedir(), `nodes/node-v${version}-linux-x64/bin/node`);
+    join(homedir(), `nodes/node-v${version}-linux-${architecture}/bin/node`);
   const npmCli = join(tools, 'node_modules/npm/bin/npm-cli.js');
   const host = join(homedir(), 'host/claude');
   const cleanEnv = { ...process.env };
@@ -172,6 +244,11 @@ async function main() {
   try {
     if (existsSync(workspace)) throw Error('WSL_HOST_WORKSPACE_EXISTS');
     mkdirSync(workspace);
+    if (
+      command('findmnt', ['-n', '-o', 'FSTYPE', '-T', workspace], workspace) !==
+      'ext4'
+    )
+      throw Error('WSL_HOST_EXT4_REQUIRED');
     command('git', ['init', '--quiet'], workspace);
     command(
       'git',
@@ -229,7 +306,7 @@ async function main() {
     phase = 'NPM';
     const bundledNpm = join(
       homedir(),
-      'nodes/node-v22.16.0-linux-x64/lib/node_modules/npm/bin/npm-cli.js',
+      `nodes/node-v22.16.0-linux-${architecture}/lib/node_modules/npm/bin/npm-cli.js`,
     );
     command(
       nodeFor('22.16.0'),
@@ -250,7 +327,9 @@ async function main() {
   } catch {
     for (const row of rows) row.phase = phase;
     console.log(
-      JSON.stringify(validateWslHostExport(bundle, sourceSha, artifactSha256)),
+      JSON.stringify(
+        validateWslHostExport(bundle, sourceSha, artifactSha256, architecture),
+      ),
     );
     process.exitCode = 1;
     return;
@@ -259,7 +338,7 @@ async function main() {
     const node = nodeFor(row.node);
     const env = {
       ...cleanEnv,
-      PATH: `${join(homedir(), `nodes/node-v${row.node}-linux-x64/bin`)}:${join(homedir(), 'host')}:/usr/bin:/bin`,
+      PATH: `${join(homedir(), `nodes/node-v${row.node}-linux-${architecture}/bin`)}:${join(homedir(), 'host')}:/usr/bin:/bin`,
       CLAUDE_CONFIG_DIR: join(homedir(), `host-config-${row.node}`),
     };
     row.phase = 'DEPENDENCIES';
@@ -318,7 +397,10 @@ async function main() {
       if (result.error) throw Error('WSL_HOST_PROBE_PROCESS_FAILED');
       const record = JSON.parse(
         readFileSync(
-          join(destination, `wsl-x64-${row.node.split('.')[0]}.json`),
+          join(
+            destination,
+            `wsl-${architecture}-${row.node.split('.')[0]}.json`,
+          ),
           'utf8',
         ),
       );
@@ -326,7 +408,7 @@ async function main() {
       if (
         record.platform !== 'wsl' ||
         record.environment !== 'wsl2' ||
-        record.arch !== 'x64' ||
+        record.arch !== architecture ||
         record.node !== `v${row.node}` ||
         record.artifactSha256 !== artifactSha256 ||
         ![0, 1].includes(result.status)
@@ -355,7 +437,9 @@ async function main() {
     }
   }
   console.log(
-    JSON.stringify(validateWslHostExport(bundle, sourceSha, artifactSha256)),
+    JSON.stringify(
+      validateWslHostExport(bundle, sourceSha, artifactSha256, architecture),
+    ),
   );
   if (rows.some((row) => row.status === 'failed')) process.exitCode = 1;
 }
