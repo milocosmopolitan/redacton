@@ -109,17 +109,21 @@ jobs:
         with:
           name: canonical-package
           path: artifacts
-      - run: node scripts/verify-artifact.mjs --native && npm run test:installer
-      - if: inputs.scope == 'host' && (inputs.target == 'all' || inputs.target == matrix.target)
+      - id: artifact
+        run: node scripts/verify-artifact.mjs --native
+      - id: fixtures
+        run: npm run test:installer
+      - id: host
+        if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'host' }}
         shell: bash
         run: |
           node scripts/install-ci-host.mjs "$RUNNER_TEMP/redacton-host"
           echo "$RUNNER_TEMP/redacton-host" >> "$GITHUB_PATH"
           echo "CLAUDE_CONFIG_DIR=$RUNNER_TEMP/redacton-host-config" >> "$GITHUB_ENV"
           if [ "$RUNNER_OS" = Windows ]; then echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude.exe" >> "$GITHUB_ENV"; else echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude" >> "$GITHUB_ENV"; fi
-      - if: inputs.scope == 'host'
+      - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && steps.host.outcome == 'success' && inputs.scope == 'host' }}
         run: npm run ci:host
-      - if: inputs.scope == 'package'
+      - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'package' }}
         run: npm run ci:host -- --package-only
       - uses: actions/upload-artifact@v4
         if: always() && (inputs.target == 'all' || inputs.target == matrix.target)
