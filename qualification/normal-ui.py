@@ -256,9 +256,9 @@ try:
                 send('',True);stage='off-length';stage_time=time.monotonic()
             elif stage=='off-length' and focused('Create draft') and time.monotonic()-stage_time>.3:
                 send('',True);stage='off-draft';raw=''
-            elif stage=='off-draft' and (('Draft ready' in (view+raw)) or ('· editing · base' in view and focused('Validate'))):
+            elif stage=='off-draft' and focused('Validate') and (visible_words('Draft ready',view) or '· editing · base' in view):
                 send('',True);stage='off-validate';raw=''
-            elif stage=='off-validate' and 'TURN_ON_TO_VALIDATE' in (view+raw):
+            elif stage=='off-validate' and visible_words('TURN_ON_TO_VALIDATE',view):
                 observations['offValidationRejected']=True
                 os.write(master,b'\x1b');stage='off-close';stage_time=time.monotonic()
             elif stage=='off-close' and time.monotonic()-stage_time>.7:
