@@ -311,6 +311,64 @@ test('open local panel withholds accidental composer submission even OFF; explic
   expect(fixture.operations.length).toBe(before);
   await ui.unmount();
 });
+test('panel removed by the host without ui.close never leaves composer submission blocked', async ($, on) => {
+  setup(on);
+  let listed = true;
+  on('ui.panes', () => ({
+    value: listed
+      ? [
+          {
+            id: 'redact-config',
+            title: 'Redacton local configuration',
+            isShown: true,
+            isFocused: false,
+            isPlaced: true,
+          },
+        ]
+      : [],
+  }));
+  let delivered = 0;
+  on('prompt.submit', (_$, e) => {
+    delivered++;
+    return { text: e.text };
+  });
+  await $.session.start(start);
+  await $.command.run(localCommand('redact:add-rule'));
+  const prompt = {
+    text: 'SYNTHETIC_AFTER_HOST_CLOSE',
+    wait: false,
+    origin: { kind: 'composer' },
+  } as const;
+  expect((await $.prompt.submit(prompt)).drop).toBe(
+    'REDACTON_CLOSE_LOCAL_PANEL_BEFORE_PROMPT',
+  );
+  listed = false;
+  expect((await $.prompt.submit(prompt)).text).toBe('SANITIZED');
+  // ON protection resumes: the prompt is scanned, not merely unblocked.
+  expect(delivered).toBe(1);
+  expect((await $.prompt.submit(prompt)).text).toBe('SANITIZED');
+  expect(delivered).toBe(2);
+});
+test('unreadable pane record keeps the open-panel prompt guard', async ($, on) => {
+  setup(on);
+  on('ui.panes', () => ({ deny: 'SYNTHETIC_PANES_DENIED' }));
+  let delivered = 0;
+  on('prompt.submit', (_$, e) => {
+    delivered++;
+    return { text: e.text };
+  });
+  await $.session.start(start);
+  await $.command.run(localCommand('redact:add-rule'));
+  const prompt = {
+    text: 'SYNTHETIC_FORM_ACCIDENT',
+    wait: false,
+    origin: { kind: 'composer' },
+  } as const;
+  expect((await $.prompt.submit(prompt)).drop).toBe(
+    'REDACTON_CLOSE_LOCAL_PANEL_BEFORE_PROMPT',
+  );
+  expect(delivered).toBe(0);
+});
 test('unplaced local panel never leaves ordinary composer submission blocked', async ($, on) => {
   setup(on, { schemaVersion: 1, rules: [] }, false, undefined, false);
   on('prompt.submit', (_$, e) => ({ text: e.text }));
