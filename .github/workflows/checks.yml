@@ -56,11 +56,18 @@ jobs:
       - run: node scripts/measure-budgets.mjs
         env:
           REDACTON_BUDGET_REPORT: qualification/results/budgets.json
+      - name: Measure one-CPU process contention on the existing Linux Node 22 VM
+        if: matrix.node == '22.16.0'
+        run: |
+          benchmark_cpu="$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"
+          taskset -c "$benchmark_cpu" node scripts/measure-budgets.mjs --cpu-load --single-cpu-affinity
+        env:
+          REDACTON_BUDGET_REPORT: qualification/results/budgets-single-cpu.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: budgets-linux-${{ matrix.node }}
-          path: qualification/results/budgets.json
+          path: qualification/results/budgets*.json
           retention-days: 3
           if-no-files-found: error
       - run: npm run ci:identity

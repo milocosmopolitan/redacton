@@ -17,7 +17,7 @@ forced-WASM package. It removes those package copies in `finally`. No dependency
 installation, new daemon, or persistent worker is introduced. Optional
 `--cpu-load` adds one competing CPU process that exits after at most 30 seconds and
 is terminated after measurements. This is CPU competition on the local machine,
-not an assertion of a container quota or constrained VM.
+not an assertion of a container quota. `--single-cpu-affinity --cpu-load` additionally requires Linux and verifies that both the measuring process and the competing worker have the same single allowed logical CPU in `/proc/self/status`. The competitor remains finite (at most 30 seconds), and early competitor exit fails the constrained report. Helper children inherit the same affinity. This constrains the process subtree's scheduling, not the VM's machine-wide CPU count or quota.
 
 Each artifact uses 10 fresh processes per measured operation. Reports retain
 attempt/failure counts, nearest-rank p50/p95, and maximum over successful attempts.
@@ -139,7 +139,14 @@ identities, never hashes of scanned input or rule contents:
 
 Node 22.16.0 and the temporary Node 24.21.0 binary were measured locally.
 Linux, native Windows, WSL, Cowork, VM and
-container runtime measurements remain unverified here. The installed Docker
+container runtime measurements remain unverified locally. The existing Linux
+Node 22 PR job now runs a second report on its virtualized GitHub runner:
+`taskset` selects the smallest CPU in the job's actual allowed affinity set,
+then the script verifies parent and worker affinity before measuring. It does not
+assume CPU 0 is allowed. Both idle and single-CPU contention reports are uploaded
+by the same existing job, without adding jobs or a benchmark-specific workflow.
+Successful CI execution establishes that named GitHub VM process-contention row;
+it does not establish a machine CPU quota or unknown user's VM behavior. The installed Docker
 client's read-only daemon probes did not complete and were interrupted; no image
 was pulled or runtime created. Existing CI jobs can run this script on their
 actual Node/platform combinations and retain small JSON reports without adding

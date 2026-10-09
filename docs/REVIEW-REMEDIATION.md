@@ -62,7 +62,7 @@ Node 22.16.0/24.21.0 native and forced-WASM runs and bounded CPU competition had
 zero failures. The evidence supports retaining 2,000 ms and four pending calls;
 there is no daemon or guessed increase. Existing Linux Node 22/24 and Windows
 Node 22 PR jobs retain new bounded measurement reports. [Budgets](BUDGETS.md)
-state provenance, uncontrolled cold disk cache and unmeasured VM/WSL/host cases.
+state provenance, uncontrolled cold disk cache and unmeasured WSL/host cases. The existing Linux Node 22 job additionally schedules its benchmark and finite competitor on one verified allowed logical CPU in the GitHub VM, retaining a second report without adding a job. This is process contention, not a machine-wide CPU quota; local macOS results do not prove that Linux CI row.
 
 #64 binds leases/recovery claims to host/PID namespace, observed process start
 and nonce, retaining atomic CAS and revalidation. Regressions cover PID reuse,

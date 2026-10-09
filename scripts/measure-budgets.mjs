@@ -17,6 +17,15 @@ await import('./build-helper.mjs');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { LIMITS, POLICY_ID } = await import('../helper/dist/core.js');
 const samples = 10;
+const singleCpuAffinity = process.argv.includes('--single-cpu-affinity');
+async function observedAffinity() {
+  if (process.platform !== 'linux')
+    throw new Error('BUDGET_AFFINITY_UNAVAILABLE');
+  const status = await readFile('/proc/self/status', 'utf8');
+  const allowed = /^Cpus_allowed_list:\s*([0-9,-]+)$/m.exec(status)?.[1];
+  if (!allowed) throw new Error('BUDGET_AFFINITY_UNAVAILABLE');
+  return allowed;
+}
 const token = 'ghp_SYNTHETICREVOKED00000000000000000000';
 const text = `Synthetic ordinary data\n${token}\n`;
 const config = {
@@ -94,8 +103,26 @@ start=performance.now();let busy=false;
 try{await store.save('personal',undefined,true,saved,{schemaVersion:1,rules:[]},engine,core.CANONICAL_TYPES)}catch(error){busy=error.message==='SETTINGS_BUSY'}
 timings.liveLockRefusalMs=performance.now()-start;await rm(lock);
 console.log(JSON.stringify({timings,artifact:engine.artifact(),valid:first.status==='ok'&&warm.status==='ok'&&busy&&!first.segments[0].text.includes('ghp_SYNTHETICREVOKED00000000000000000000')}));`;
+const output = resolve(
+  process.env.REDACTON_BUDGET_REPORT ??
+    join(root, 'qualification/results/budgets.json'),
+);
 let load;
+let affinity = null;
 try {
+  await rm(output, { force: true });
+  if (singleCpuAffinity) {
+    if (!process.argv.includes('--cpu-load'))
+      throw new Error('BUDGET_AFFINITY_UNAVAILABLE');
+    const parent = await observedAffinity();
+    if (!/^(?:0|[1-9][0-9]*)$/.test(parent))
+      throw new Error('BUDGET_AFFINITY_UNAVAILABLE');
+    affinity = {
+      parentAllowedCpuList: parent,
+      workerAllowedCpuList: null,
+      verified: false,
+    };
+  }
   const packages = {};
   const available = run([
     '--input-type=module',
@@ -134,19 +161,58 @@ try {
     packages[artifact] = directory;
   }
   if (process.argv.includes('--cpu-load')) {
-    // One finite competing process, not a daemon or a claimed VM/container quota.
+    // Affinity is process scheduling, never a machine-wide CPU quota.
+    const loadDeadlineMs = 30000;
     load = spawn(
       process.execPath,
       [
         '-e',
-        'const end=Date.now()+30000;while(Date.now()<end){Math.sqrt(Math.random())}',
+        `
+      const {readFileSync}=require('node:fs');
+      const cpuAffinity=process.platform==='linux'
+        ? /^Cpus_allowed_list:\\s*([0-9,-]+)$/m.exec(readFileSync('/proc/self/status','utf8'))?.[1]??null : null;
+      process.stdout.write(JSON.stringify({cpuAffinity})+'\\n');
+      const end=Date.now()+${loadDeadlineMs};while(Date.now()<end){Math.sqrt(Math.random())}
+    `,
       ],
       {
-        stdio: 'ignore',
+        stdio: ['ignore', 'pipe', 'ignore'],
         env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' },
       },
     );
+    const workerAffinity = await new Promise((resolveWorker, rejectWorker) => {
+      const timer = setTimeout(
+        () => rejectWorker(new Error('BUDGET_AFFINITY_UNAVAILABLE')),
+        2000,
+      );
+      load.once('error', () => {
+        clearTimeout(timer);
+        rejectWorker(new Error('BUDGET_AFFINITY_UNAVAILABLE'));
+      });
+      let output = '';
+      load.stdout.on('data', (chunk) => {
+        output += chunk;
+        if (output.length > 128) {
+          clearTimeout(timer);
+          rejectWorker(new Error('BUDGET_AFFINITY_UNAVAILABLE'));
+          return;
+        }
+        if (!output.includes('\n')) return;
+        clearTimeout(timer);
+        try {
+          resolveWorker(JSON.parse(output).cpuAffinity);
+        } catch {
+          rejectWorker(new Error('BUDGET_AFFINITY_UNAVAILABLE'));
+        }
+      });
+    });
+    if (singleCpuAffinity) {
+      affinity.workerAllowedCpuList = workerAffinity;
+      affinity.verified = workerAffinity === affinity.parentAllowedCpuList;
+      if (!affinity.verified) throw new Error('BUDGET_AFFINITY_UNAVAILABLE');
+    }
   }
+
   const baseline = [];
   for (let index = 0; index < samples; index++) {
     const result = run(['-e', 'console.log("true")']);
@@ -300,7 +366,7 @@ try {
       .update(await readFile(join(root, 'helper/dist', name)))
       .digest('hex');
   const report = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     node: process.version,
     platform: process.platform,
     arch: process.arch,
@@ -316,21 +382,26 @@ try {
     maxInputBytes: LIMITS.inputBytes,
     limits: { timeoutMs: LIMITS.timeoutMs, pending: 4 },
     load: load ? 'one finite competing CPU process' : 'sequential local idle',
+    cpuAffinity: affinity,
+    executionEnvironment:
+      process.env.GITHUB_ACTIONS === 'true' &&
+      process.env.RUNNER_ENVIRONMENT === 'github-hosted'
+        ? 'GitHub-hosted virtualized runner'
+        : 'local or externally managed runner',
     methodology:
       '10 fresh processes per artifact and operation; nearest-rank p50/p95 over successful attempts, failures retained separately. First sample is cold-process only, never claimed cold disk cache. Component worker separately times import, initialization, scan, settings and live-lock refusal; values cannot be subtracted from unrelated event samples. No process startup injection or original input in argv/env.',
     processStartupBaseline: summary(baseline, samples),
     artifacts,
-    scope:
-      'Direct Node helper and component fixtures; excludes Claude SDK dispatch, UI/model delivery, cancellation, VM/CPU quotas and unmeasured platforms. Lock contention refuses immediately rather than waiting. Native and forced WASM package copies removed in finally.',
+    scope: singleCpuAffinity
+      ? 'Direct Node helper/component fixtures and competing worker on one verified allowed logical CPU in a Linux process subtree; excludes Claude SDK dispatch, UI/model delivery, cancellation and any machine-wide CPU quota claim. A GitHub-hosted runner is virtualized, not evidence about an unknown user VM.'
+      : 'Direct Node helper and component fixtures; excludes Claude SDK dispatch, UI/model delivery, cancellation, VM/CPU quotas and unmeasured platforms. Lock contention refuses immediately rather than waiting. Native and forced WASM package copies removed in finally.',
   };
-  const output = resolve(
-    process.env.REDACTON_BUDGET_REPORT ??
-      join(root, 'qualification/results/budgets.json'),
-  );
-  await mkdir(resolve(output, '..'), { recursive: true });
-  await writeFile(output, `${JSON.stringify(report, null, 2)}\n`);
   const failed =
     baseline.length !== samples ||
+    (singleCpuAffinity &&
+      (!affinity?.verified ||
+        load.exitCode !== null ||
+        load.signalCode !== null)) ||
     Object.values(artifacts).some(
       (row) =>
         row.freshProcessEvents.failures ||
@@ -339,29 +410,50 @@ try {
         row.settingsSaveEvents.failures ||
         Object.values(row.components).some((metric) => metric.failures),
     );
+  report.status = failed ? 'failed' : 'passed';
+  report.competitionAliveThroughMeasurements = load
+    ? load.exitCode === null && load.signalCode === null
+    : null;
+  await mkdir(resolve(output, '..'), { recursive: true });
+  await writeFile(output, `${JSON.stringify(report, null, 2)}\n`);
   console.log(
     JSON.stringify({
       status: failed ? 'failed' : 'passed',
       node: report.node,
       platform: report.platform,
       load: report.load,
+      cpuAffinity: report.cpuAffinity,
+      executionEnvironment: report.executionEnvironment,
       processStartupBaseline: report.processStartupBaseline,
       artifacts,
     }),
   );
   if (failed) process.exitCode = 1;
-} catch {
-  console.log(
-    JSON.stringify({
-      status: 'failed',
-      errorCode: 'BUDGET_FIXTURE_UNAVAILABLE',
-    }),
-  );
+} catch (error) {
+  const failure = {
+    schemaVersion: 3,
+    status: 'failed',
+    errorCode:
+      error?.message === 'BUDGET_AFFINITY_UNAVAILABLE'
+        ? 'BUDGET_AFFINITY_UNAVAILABLE'
+        : 'BUDGET_FIXTURE_UNAVAILABLE',
+    node: process.version,
+    platform: process.platform,
+    cpuAffinity: affinity,
+    scope:
+      'Measurement setup failed; no successful constrained-VM or CPU-quota evidence.',
+  };
+  await mkdir(resolve(output, '..'), { recursive: true });
+  await writeFile(output, `${JSON.stringify(failure, null, 2)}\n`);
+  console.log(JSON.stringify(failure));
   process.exitCode = 1;
 } finally {
-  if (load) {
+  if (load && load.exitCode === null && load.signalCode === null) {
+    const closed = new Promise((resolveExit) =>
+      load.once('close', resolveExit),
+    );
     load.kill('SIGTERM');
-    await new Promise((resolveExit) => load.once('close', resolveExit));
+    await closed;
   }
   await rm(namespace, { recursive: true, force: true });
 }
