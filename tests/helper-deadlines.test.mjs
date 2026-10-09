@@ -22,7 +22,39 @@ const selfCheck = {
 test('only complete validated storage routes gain the finite settings deadline', () => {
   assert.equal(LIMITS.timeoutMs, 2000);
   assert.equal(LIMITS.settingsTimeoutMs, 5000);
-  assert.equal(requestDeadlineMs(settings), 5000);
+  const expected = {
+    expectedIdentity: '0'.repeat(64),
+    expectedRevision: 'absent',
+    expectedDocument: { schemaVersion: 1, rules: [] },
+  };
+  for (const valid of [
+    settings,
+    { ...settings, operation: 'import-config' },
+    {
+      ...settings,
+      operation: 'save-config',
+      storage: {
+        ...settings.storage,
+        ...expected,
+        document: { schemaVersion: 1, rules: [] },
+      },
+    },
+    {
+      ...settings,
+      operation: 'reset-config',
+      storage: { ...settings.storage, ...expected },
+    },
+    {
+      ...settings,
+      operation: 'export-config',
+      storage: {
+        ...settings.storage,
+        expectedIdentity: expected.expectedIdentity,
+        document: { schemaVersion: 1, rules: [] },
+      },
+    },
+  ])
+    assert.equal(requestDeadlineMs(valid), 5000);
   for (const invalid of [
     selfCheck,
     { ...settings, extra: true },

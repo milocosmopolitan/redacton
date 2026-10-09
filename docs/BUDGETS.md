@@ -1,22 +1,31 @@
 # Helper startup and bounded work measurements
 
-Current-source issue #63 measurements retain the 2,000 ms helper/parent deadline
-and four pending helper calls. The measured local cases do not justify larger
-budgets or a persistent worker. Busy settings locks refuse promptly; they do not
-wait for a timestamp or TTL. Windows process-start probes can each take up to
-1,500 ms, so stale recovery can exceed the shared deadline on a slow machine.
-That outcome stays unavailable and retryable; no fallback releases original content.
-Windows timing must be measured before separating settings/recovery deadlines,
-and any change must update both the parent and helper timers.
+Current-source issue #63 retains the 2,000 ms scan/self-check deadline and four
+pending helper calls, with a separate 5,000 ms settings/transfer deadline.
+The parent SDK bounds the complete process launch. The helper bounds stdin
+reading and parsing to 2,000 ms; only a complete validated settings envelope and
+documents gain the remaining time until an absolute 5,000 ms helper deadline.
+An untrusted operation string, malformed request or delayed stdin cannot reset
+that timer. Scan, self-check, configuration validation and preview remain 2,000 ms.
 
-The Windows 2025 CI run after switching to the direct .NET probe still observed
-its first two ownership calls fail at 1,052 ms and 1,076 ms with the previous
-1,000 ms phase timeout; subsequent storage tests passed once failed observations
-could retry. This is evidence that the original phase budget was too tight for
-those starts, not a completed cold-start latency measurement. The Windows identity
-phase now has 1,500 ms of bounded headroom within the unchanged 2,000 ms total
-helper/SDK deadline. Its sufficiency remains conditional on actual Windows CI;
-no larger total budget, retries, prewarm-only gate or live-owner bypass is added.
+Actual Windows 2025 CI measured the first direct .NET process-start probes fail
+at 1,052/1,076 ms under the former 1,000 ms phase budget, then at 1,557 ms under
+1,500 ms, while later warmed probes passed. These failures are evidence that
+local macOS measurements and warmed Windows tests do not establish cold Windows
+startup. The probe phase is now bounded to 3,000 ms and complete settings helpers
+to 5,000 ms. The first full settings load/save is measured before component fixtures
+or storage tests can warm PowerShell. `firstSettings` retains its total elapsed
+milliseconds, success and fixed failure code even when that cold event fails.
+Engine artifact availability can touch engine files beforehand, but performs no
+settings/PowerShell probe; cold OS filesystem caches are not claimed. Successful numeric cold full-save evidence
+must come from the next actual Windows CI run, not a timeout-only observation.
+
+This does not add a daemon, prewarming prerequisite, retries or a live-owner
+bypass. Busy locks still refuse promptly. Multiple slow ownership probes during
+stale recovery can exceed the finite settings deadline; the result stays
+unavailable and retryable, with active rules unchanged and selected ON content
+withheld. The setting applies globally rather than hiding a platform-specific
+parent/helper mismatch.
 
 ## Method and scope
 
@@ -47,7 +56,7 @@ Startup overrides clear `NODE_OPTIONS` and `NODE_PATH`. The generated JSON repor
 contains aggregate timings, bounded identity provenance and fixed failures only.
 `REDACTON_BUDGET_REPORT` selects its output file for existing CI job artifacts.
 The script fails on unsuccessful measured operations, but uses the actual configured
-2,000 ms deadline rather than a flaky machine-specific p95 threshold. Native
+2,000 ms scan and 5,000 ms settings deadlines rather than a flaky machine-specific p95 threshold. Native
 unavailability is explicitly reported, not mislabeled as native success.
 
 These direct Node fixtures exclude Claude SDK dispatch, UI rendering, model payload

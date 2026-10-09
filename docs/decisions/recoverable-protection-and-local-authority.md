@@ -35,9 +35,13 @@ authorizes removal of a live lease. A separate private scope with reviewed rules
 is the explicit indeterminate-recovery route. Non-Linux shared hosts and Windows
 ACL privacy have documented unsupported/deployment boundaries.
 
-Retain process-per-event helpers with a 2,000 ms deadline and four pending calls.
-Measured startup/import/scan/settings components do not justify a daemon or larger
-budget. Clear inherited Node startup options and search overrides, while disclosing
+Retain process-per-event helpers with four pending calls, 2,000 ms for scans and
+self-checks, and 5,000 ms for settings/transfer operations. Actual cold Windows
+ownership-probe failures justify the bounded settings split rather than a daemon
+or prewarming-only gate. Stdin reading/parsing remains 2,000 ms; a strictly
+validated settings request gains only the remaining absolute 5,000 ms deadline,
+with the parent enforcing the entire launch. Failed recovery keeps active rules
+and withholds selected ON content. Clear inherited Node startup options and search overrides, while disclosing
 that the SDK environment is an overlay. Known undefined Bash metadata is removed
 by trusted reconstruction; populated aliases and unknown fields remain withheld.
 Cowork and additional tool routes require their existing independent evidence

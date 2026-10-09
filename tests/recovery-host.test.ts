@@ -63,6 +63,7 @@ function fixture(on: On) {
       '12345678-1234-1234-1234-123456789abc',
     );
     if (storage) {
+      expect(e.init?.timeoutMs).toBe(5000);
       control.loads++;
       if (control.gate) {
         control.began?.resolve();
@@ -84,6 +85,7 @@ function fixture(on: On) {
       return storage;
     }
     const request = readRequest(e.init?.stdin);
+    expect(e.init?.timeoutMs).toBe(2000);
     if (request.operation === 'self-check') control.checks++;
     if (request.operation === 'sanitize') {
       control.scans++;
