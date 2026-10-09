@@ -74,7 +74,11 @@ against OFF and each management entry without helper dispatch or pane opening.
 `routes-host.mjs model-off` and `model-config` forced model Skill attempts to run
 `redactoff` and `redact:config` after synthetic injected instructions claimed user
 authority. Each produced a tool error, two loopback model requests and no Mod
-management execution. This does not prove arbitrary future host tools cannot
+management success message. `authority-host.mjs` runs both negative controls
+and requires the offered Skill, one error result, two model requests, completion,
+no slash arguments, and absence of OFF/panel-open success messages. These are
+actual model tool tests, distinct from SDK/plugin command-call refusals. They do
+not inspect every possible internal mutation or prove arbitrary future host tools cannot
 invoke commands. Actual terminal 140- and 80-column OFF/ON tests confirmed immediate and
 persistent OFF warnings while typing and after a Bash operation, clearing on ON,
 restoring on repeated OFF, and zero model requests. The OFF CI gate requires both

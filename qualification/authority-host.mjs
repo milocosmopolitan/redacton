@@ -102,6 +102,48 @@ try {
     }),
   );
   if (!passed) process.exitCode = 1;
+  for (const mode of ['model-off', 'model-config']) {
+    const execution = spawnSync(
+      process.execPath,
+      [resolve('qualification/routes-host.mjs'), mode],
+      {
+        encoding: 'utf8',
+        timeout: 60000,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, REDACTON_PLUGIN_ROOT: root },
+      },
+    );
+    let row;
+    try {
+      row = JSON.parse(execution.stdout.trim());
+    } catch {
+      row = {};
+    }
+    const modelPassed =
+      execution.status === 0 &&
+      !execution.error &&
+      row.mode === mode &&
+      row.authorityEvidence === 'model-skill-rejection' &&
+      row.pluginLoaded === true &&
+      row.toolOffered === true &&
+      row.modelRequests === 2 &&
+      row.toolResults === 1 &&
+      row.toolError === true &&
+      row.completed === true &&
+      row.offWarning === false &&
+      row.configurationOpened === false &&
+      row.modelSkillArgumentsAbsent === true;
+    console.log(
+      JSON.stringify({
+        code: 'REDACTON_MODEL_SKILL_AUTHORITY',
+        hostVersion,
+        mode,
+        modelSkillRejected: modelPassed,
+        modelRequests: row.modelRequests === 2 ? 2 : null,
+      }),
+    );
+    if (!modelPassed) process.exitCode = 1;
+  }
   await withPythonDependencies(async ({ python, dependencies, temporary }) => {
     for (const columns of [140, 80]) {
       const execution = spawnSync(

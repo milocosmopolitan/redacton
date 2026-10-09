@@ -237,6 +237,17 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\\n');}
       writeContainsMarker,
       resourceRequests,
       toolError: results.some((block) => block.is_error === true),
+      completed: result.output.includes('ROUTE_DONE'),
+      authorityEvidence: mode.startsWith('model-')
+        ? 'model-skill-rejection'
+        : null,
+      offWarning: result.output.includes('Warning: Redacton is OFF.'),
+      configurationOpened: result.output.includes(
+        'Redacton local panel opened',
+      ),
+      modelSkillArgumentsAbsent: mode.startsWith('model-')
+        ? !Object.hasOwn(input, 'args') && !Object.hasOwn(input, 'arguments')
+        : null,
     }),
   );
   if (
@@ -244,7 +255,12 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\\n');}
     !offered ||
     !results.length ||
     (mode.startsWith('model-') &&
-      !results.every((block) => block.is_error === true))
+      (captures.length !== 2 ||
+        results.length !== 1 ||
+        !results.every((block) => block.is_error === true) ||
+        !result.output.includes('ROUTE_DONE') ||
+        result.output.includes('Warning: Redacton is OFF.') ||
+        result.output.includes('Redacton local panel opened')))
   )
     process.exitCode = 1;
 } finally {
