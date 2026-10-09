@@ -116,6 +116,9 @@ try {
   // An incomplete run is not compatibility evidence, even if no raw marker was observed.
   const local = mode === 'off' || mode === 'on';
   if (exitCode !== 0 || captures.length !== (local ? 0 : mode === 'prompt' ? 1 : 2) || toolResults.length !== (local || mode === 'prompt' ? 0 : 1) || (local ? !output.includes(mode === 'off' ? 'Warning: Redacton is OFF.' : 'Redacton ON.') : !output.includes('SPIKE_DONE'))) process.exitCode = 1;
-  if (mode === 'denied-bash' && (toolExecutions !== 0 || !originalArgumentsIntact || !toolResults.some(result => result.is_error === true) || JSON.stringify(toolResults).includes(synthetic))) process.exitCode = 1;
+  // Successful completion alone cannot qualify a raw fallback or blanket denial.
+  if (mode === 'prompt' && (report.rawInPromptMessages || !report.sanitizedPlaceholderInPrompt)) process.exitCode = 1;
+  if ((mode === 'read' || mode === 'bash') && (report.rawInToolResults || !report.sanitizedPlaceholderInToolResults || report.toolResultIsError || report.fixedWithholdInToolResults || !originalArgumentsIntact)) process.exitCode = 1;
+  if (mode === 'denied-bash' && (toolExecutions !== 0 || !originalArgumentsIntact || !report.toolResultIsError || !report.fixedWithholdInToolResults || report.rawInToolResults)) process.exitCode = 1;
   }
 } finally { server.close(); await rm(dir, { recursive: true, force: true }); }
