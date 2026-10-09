@@ -22,6 +22,10 @@ on:
         type: choice
         options: [all, terminal-ui, guarded-errors]
         default: all
+      attempt_wsl:
+        description: Windows Node24 only, explicit real WSL2 installation probe (not release qualification)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -130,6 +134,17 @@ jobs:
         run: npm run ci:host -- --probe=${{ inputs.probe }}
       - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'package' }}
         run: npm run ci:host -- --package-only
+      - id: wsl
+        if: ${{ !cancelled() && inputs.attempt_wsl && matrix.target == 'win32-x64' && inputs.node == '24.21.0' && steps.artifact.outcome == 'success' && steps.host.outcome == 'success' }}
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/qualify-wsl.ps1
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.wsl.outcome != 'skipped' && steps.wsl.outcome != ''
+        with:
+          name: bounded-wsl-installation-only
+          path: qualification/results/wsl-installation.json
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always() && (inputs.target == 'all' || inputs.target == matrix.target)
         with:

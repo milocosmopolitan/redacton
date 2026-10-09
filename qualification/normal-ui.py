@@ -144,6 +144,16 @@ def focused(label):
             return True
     return False
 
+def startup_dialog(kind, current_stage, view):
+    if current_stage != 'startup' or 'Enter' not in view:
+        return False
+    if kind == 'trust':
+        return any(question in view for question in [
+            'Do you trust the files in this folder?',
+            'Is this a project you created or one you trust?',
+        ])
+    return kind == 'api-key' and 'Do you want to use this API key?' in view
+
 def control_geometry(label):
     text = '\n'.join(screen.display)
     positions = []
@@ -189,13 +199,13 @@ try:
         view = ' '.join(displayed().split())
         if 'Warning: Redacton is OFF.' in view:
             observations['immediateWarningObserved'] = True
-        if not trust_answered and 'trust' in view.lower() and 'Enter' in view:
+        if not trust_answered and startup_dialog('trust', stage, view):
             time.sleep(1)
             send('\x1b[B', True)
             trust_answered = True
             observations['trustAnswered'] = True
             raw = ''
-        if not key_answered and 'Do you want to use this API key?' in view and 'Enter' in view:
+        if not key_answered and startup_dialog('api-key', stage, view):
             time.sleep(1)
             send('\x1b[A', True)
             key_answered = True
