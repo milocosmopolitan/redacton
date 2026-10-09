@@ -193,7 +193,7 @@ async function processStart(pid: number): Promise<string | null> {
                 `[System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().Ticks`,
               ],
               {
-                timeout: 1500,
+                timeout: 3000,
                 maxBuffer: 1024,
                 windowsHide: true,
                 env: { SystemRoot: process.env.SystemRoot },

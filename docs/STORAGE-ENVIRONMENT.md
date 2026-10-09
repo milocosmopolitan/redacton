@@ -21,10 +21,16 @@ failed observation is retryable rather than poisoning the helper process cache.
 Windows stdout must be bounded numeric ticks; unknown output never proves a
 process identity. macOS has second-level precision; an indistinguishable reused
 PID conservatively stays busy. Probes have fixed timeouts of 500 ms on macOS and
-1,500 ms on Windows within the unchanged 2,000 ms helper/SDK deadline. The prior
-1,000 ms Windows phase timed out at 1,052 ms and 1,076 ms in CI before later
-observations succeeded; 1,500 ms is bounded phase headroom and requires actual
-Windows CI validation, not a guaranteed latency. Missing probes fail settings saves with a fixed unavailable
+3,000 ms on Windows. Settings helper/SDK operations have a separate bounded
+5,000 ms deadline; scans remain bounded at 2,000 ms. The previous Windows phases
+timed out at 1,052/1,076 ms with 1,000 ms and at 1,557 ms with 1,500 ms in CI,
+while later observations succeeded. These are censored timeout observations, not
+completed cold-start latency. The 3,000 ms phase and 5,000 ms settings deadline
+remain validation candidates until the actual first-save CI diagnostic passes.
+The benchmark now measures its first real-helper settings save before component
+fixtures, retains its elapsed time even on failure, and fails when it misses the
+settings deadline. No successful cold-start claim is made from prewarming alone.
+Missing probes fail settings saves with a fixed unavailable
 code; they do not bypass locking.
 
 Only same-namespace ESRCH or a verified changed process start proves abandonment.

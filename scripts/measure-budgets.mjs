@@ -82,6 +82,12 @@ function run(argv, input, timeoutMs = LIMITS.timeoutMs, environment = {}) {
       value !== undefined,
     elapsedMs: performance.now() - start,
     value,
+    failureCode:
+      result.error?.code === 'ETIMEDOUT'
+        ? 'PROCESS_TIMEOUT'
+        : result.stderr
+          ? 'PROCESS_STDERR'
+          : 'PROCESS_FAILED',
   };
 }
 // This fixture reports numeric timings and fixed booleans only. Input is stdin.
@@ -111,6 +117,11 @@ let load;
 let affinity = null;
 try {
   await rm(output, { force: true });
+  if (
+    !Number.isSafeInteger(LIMITS.settingsTimeoutMs) ||
+    LIMITS.settingsTimeoutMs < 1
+  )
+    throw new Error('BUDGET_SETTINGS_LIMIT_UNAVAILABLE');
   if (singleCpuAffinity) {
     if (!process.argv.includes('--cpu-load'))
       throw new Error('BUDGET_AFFINITY_UNAVAILABLE');
@@ -225,20 +236,9 @@ try {
       maxEventRuns = [],
       settingsLoadRuns = [],
       settingsSaveRuns = [];
+    let firstSettings = null;
     const maxText = `${token}\n${'a'.repeat(LIMITS.inputBytes - token.length - 1)}`;
     for (let index = 0; index < samples; index++) {
-      const components = run(
-        [join(directory, 'measure.mjs')],
-        JSON.stringify(request(text)),
-        10000,
-      );
-      componentRuns.push(
-        components.ok &&
-          components.value.valid &&
-          components.value.artifact === artifact
-          ? components.value.timings
-          : null,
-      );
       const settingsEnv = {
         REDACTON_SETTINGS_ROOT: join(directory, 'event-settings'),
       };
@@ -252,7 +252,7 @@ try {
       const loaded = run(
         [join(directory, 'helper/index.js')],
         JSON.stringify(settingsRequest),
-        LIMITS.timeoutMs,
+        LIMITS.settingsTimeoutMs,
         settingsEnv,
       );
       const loadValid =
@@ -261,6 +261,30 @@ try {
         loaded.value.artifact === artifact &&
         loaded.value.settings;
       settingsLoadRuns.push(loadValid ? loaded.elapsedMs : null);
+      const observation = (result, valid) => ({
+        elapsedMs: round(result.elapsedMs),
+        ok: Boolean(valid),
+        errorCode: valid
+          ? null
+          : result.ok &&
+              new Set([
+                'SETTINGS_UNAVAILABLE',
+                'SETTINGS_BUSY',
+                'SETTINGS_CORRUPT',
+                'TIMEOUT',
+                'ENGINE_UNAVAILABLE',
+                'ENGINE_VERSION',
+                'INVALID_REQUEST',
+              ]).has(result.value?.errorCode)
+            ? result.value.errorCode
+            : result.failureCode,
+      });
+      if (index === 0)
+        firstSettings = {
+          beforeComponentMeasurements: true,
+          load: observation(loaded, loadValid),
+          save: null,
+        };
       if (loadValid) {
         const saved = run(
           [join(directory, 'helper/index.js')],
@@ -276,9 +300,16 @@ try {
               document: { schemaVersion: 1, rules: [] },
             },
           }),
-          LIMITS.timeoutMs,
+          LIMITS.settingsTimeoutMs,
           settingsEnv,
         );
+        if (index === 0)
+          firstSettings.save = observation(
+            saved,
+            saved.ok &&
+              saved.value.status === 'ok' &&
+              saved.value.artifact === artifact,
+          );
         settingsSaveRuns.push(
           saved.ok &&
             saved.value.status === 'ok' &&
@@ -287,6 +318,18 @@ try {
             : null,
         );
       } else settingsSaveRuns.push(null);
+      const components = run(
+        [join(directory, 'measure.mjs')],
+        JSON.stringify(request(text)),
+        10000,
+      );
+      componentRuns.push(
+        components.ok &&
+          components.value.valid &&
+          components.value.artifact === artifact
+          ? components.value.timings
+          : null,
+      );
       const event = run(
         [join(directory, 'helper/index.js')],
         JSON.stringify(request(text)),
@@ -319,6 +362,7 @@ try {
       'liveLockRefusalMs',
     ];
     artifacts[artifact] = {
+      firstSettings,
       components: Object.fromEntries(
         metrics.map((metric) => [
           metric,
@@ -380,7 +424,11 @@ try {
     samples,
     inputBytes: Buffer.byteLength(text),
     maxInputBytes: LIMITS.inputBytes,
-    limits: { timeoutMs: LIMITS.timeoutMs, pending: 4 },
+    limits: {
+      timeoutMs: LIMITS.timeoutMs,
+      settingsTimeoutMs: LIMITS.settingsTimeoutMs,
+      pending: 4,
+    },
     load: load ? 'one finite competing CPU process' : 'sequential local idle',
     cpuAffinity: affinity,
     executionEnvironment:
@@ -389,7 +437,7 @@ try {
         ? 'GitHub-hosted virtualized runner'
         : 'local or externally managed runner',
     methodology:
-      '10 fresh processes per artifact and operation; nearest-rank p50/p95 over successful attempts, failures retained separately. First sample is cold-process only, never claimed cold disk cache. Component worker separately times import, initialization, scan, settings and live-lock refusal; values cannot be subtracted from unrelated event samples. No process startup injection or original input in argv/env.',
+      '10 fresh processes per artifact and operation; nearest-rank p50/p95 over successful attempts, failures retained separately. First sample is cold-process only, never claimed cold disk cache. First settings load/save per artifact executes before its component fixtures, retaining elapsed time and fixed failure codes even on deadline failure. Component worker separately times import, initialization, scan, settings and live-lock refusal; values cannot be subtracted from unrelated event samples. No process startup injection or original input in argv/env.',
     processStartupBaseline: summary(baseline, samples),
     artifacts,
     scope: singleCpuAffinity
