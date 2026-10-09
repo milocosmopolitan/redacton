@@ -63,6 +63,16 @@ jobs:
           pattern: bounded-host-evidence-*
           merge-multiple: true
           path: qualification/evidence
+      # Pattern downloads tolerate an absent optional artifact. Missing required
+      # WSL rows still fail the strict release gate below.
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node24_run }}
+          pattern: bounded-wsl-host-evidence
+          merge-multiple: true
+          path: qualification/wsl-host-input
       - uses: actions/download-artifact@v4
         if: github.event_name == 'workflow_dispatch'
         with:
@@ -78,6 +88,8 @@ jobs:
           pattern: bounded-host-evidence-*
           merge-multiple: true
           path: qualification/evidence
+      - if: github.event_name == 'workflow_dispatch'
+        run: node scripts/ingest-wsl-evidence.mjs
       - uses: actions/download-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.manual_run != ''
         with:

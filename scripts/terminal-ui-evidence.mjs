@@ -140,7 +140,7 @@ export function terminalUiFrame(value) {
       state.exitCode === null ||
       (Number.isSafeInteger(state.exitCode) &&
         state.exitCode >= -1 &&
-        state.exitCode <= 255)
+        state.exitCode <= 0xffffffff)
     ) ||
     state.alive !== (state.exitCode === null) ||
     !bounded(state.elapsedMs, 180000) ||
@@ -187,6 +187,47 @@ export function terminalUiFrame(value) {
   return value;
 }
 
+const ptyPhases = new Set([
+  'API_SETUP',
+  'ARGUMENT',
+  'CREATE_PIPE',
+  'CREATE_CONSOLE',
+  'ATTRIBUTE',
+  'CREATE_JOB',
+  'CREATE_PROCESS',
+  'ASSIGN_JOB',
+  'RESUME',
+  'OUTPUT_LIMIT',
+  'WRITE',
+  'POLL',
+  'CLEANUP',
+  'TEST',
+]);
+export function windowsPtyState(value) {
+  const numeric = (value) =>
+    value === null ||
+    (Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff);
+  return keys(value, 'code,hresult,phase,win32') &&
+    value.code === 'WINDOWS_PTY_STATE' &&
+    ptyPhases.has(value.phase) &&
+    numeric(value.win32) &&
+    numeric(value.hresult)
+    ? value
+    : null;
+}
+export function windowsPtyDiagnostics(stdout) {
+  const output = [];
+  for (const line of stdout.split('\n')) {
+    if (line.length > 4096) continue;
+    try {
+      const value = windowsPtyState(JSON.parse(line));
+      if (value) output.push(value);
+    } catch {}
+    if (output.length === 8) break;
+  }
+  return output;
+}
+
 export function terminalUiDiagnostics(stdout) {
   const output = [];
   for (const line of stdout.split('\n')) {
@@ -199,7 +240,9 @@ export function terminalUiDiagnostics(stdout) {
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
     const keys = Object.keys(value).sort().join(',');
-    if (terminalUiFrame(value)) {
+    if (windowsPtyState(value)) {
+      output.push(windowsPtyState(value));
+    } else if (terminalUiFrame(value)) {
       output.push(terminalUiFrame(value));
     } else if (keys === 'code' && codes.has(value.code)) {
       output.push({ code: value.code });

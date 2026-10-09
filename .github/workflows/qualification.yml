@@ -26,6 +26,10 @@ on:
         description: Windows Node24 only, explicit real WSL2 installation probe (not release qualification)
         type: boolean
         default: false
+      attempt_wsl_host:
+        description: Windows Node24 only, explicit real WSL2 full host probes (includes installation)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -87,7 +91,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.attempt_wsl_host && matrix.target == 'win32-x64' && inputs.node == '24.21.0' && 60 || 30 }}
     env:
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
       DISABLE_AUTOUPDATER: '1'
@@ -135,15 +139,26 @@ jobs:
       - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'package' }}
         run: npm run ci:host -- --package-only
       - id: wsl
-        if: ${{ !cancelled() && inputs.attempt_wsl && matrix.target == 'win32-x64' && inputs.node == '24.21.0' && steps.artifact.outcome == 'success' && steps.host.outcome == 'success' }}
+        if: ${{ !cancelled() && (inputs.attempt_wsl || inputs.attempt_wsl_host) && matrix.target == 'win32-x64' && inputs.node == '24.21.0' && steps.artifact.outcome == 'success' && steps.host.outcome == 'success' }}
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/qualify-wsl.ps1
+        env:
+          WSL_HOST: ${{ inputs.attempt_wsl_host }}
+        run: |
+          if ($env:WSL_HOST -eq 'true') { pwsh -NoProfile -File scripts/qualify-wsl.ps1 -HostQualification }
+          else { pwsh -NoProfile -File scripts/qualify-wsl.ps1 }
       - uses: actions/upload-artifact@v4
         if: always() && steps.wsl.outcome != 'skipped' && steps.wsl.outcome != ''
         with:
           name: bounded-wsl-installation-only
           path: qualification/results/wsl-installation.json
           if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.attempt_wsl_host && steps.wsl.outcome != 'skipped' && steps.wsl.outcome != ''
+        with:
+          name: bounded-wsl-host-evidence
+          path: qualification/results/wsl-host/
+          if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always() && (inputs.target == 'all' || inputs.target == matrix.target)

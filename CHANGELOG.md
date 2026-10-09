@@ -7,6 +7,7 @@
 - Added candidate Unix and native PowerShell installers that stage and self-check before replacing an existing installation.
 - Added cost-conscious deterministic/package CI and separate exact-commit host/release evidence gates. Missing platform and interactive evidence remains a blocker, not a support claim.
 - Made reusable host probes select an explicit pinned Claude binary and record its observed version without an RTK runtime dependency.
+- Registered `/redacton` and `/redactoff` for immediate execution during an active turn, preserving the policy captured by each operation already in flight.
 
 ## 0.1.0
 

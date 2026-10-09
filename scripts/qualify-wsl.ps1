@@ -1,7 +1,8 @@
 #requires -Version 7.2
-# Manual installer probe only. This does not produce release-gate host qualification.
+# Manual installer probe, with optional exact-source WSL host evidence.
+# Installer results alone do not qualify host gates or a release.
 [CmdletBinding()]
-param([string]$SourceDirectory = (Get-Location).Path)
+param([string]$SourceDirectory = (Get-Location).Path, [switch]$HostQualification)
 $ErrorActionPreference = 'Stop'
 $source = [IO.Path]::GetFullPath($SourceDirectory)
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('redacton-wsl-' + [guid]::NewGuid().ToString('N'))
@@ -26,7 +27,7 @@ $oldLocal = $env:LOCALAPPDATA
 $oldUser = $env:USERPROFILE
 $oldConfig = $env:CLAUDE_CONFIG_DIR
 $oldPath = $env:PATH
-function Invoke-ProbeProcess([string]$Executable, [string[]]$Arguments, [int]$Seconds = 120) {
+function Invoke-ProbeProcess([string]$Executable, [string[]]$Arguments, [int]$Seconds = 120, [switch]$AllowFailure) {
     $script:processPhase = 'NONE'
     $script:lastExitCode = $null
     $info = [Diagnostics.ProcessStartInfo]::new()
@@ -54,7 +55,7 @@ function Invoke-ProbeProcess([string]$Executable, [string[]]$Arguments, [int]$Se
             $diagnostic = ($output + $errorOutput).Replace([string][char]0, '')
             if ($diagnostic -match '(?i)0x(80370102|80370114|8007019e)') { $script:wslErrorCode = $Matches[0].ToLowerInvariant() }
             if ($errorOutput -match 'WSL_ROW_(FIXTURES|ARTIFACT_INSTALL|DEFAULT_INSTALL|LAUNCH|VALIDATE|MISSING_CLAUDE|MOUNT_REJECTION|SETTINGS_IDENTITY)') { $script:rowFailure = $Matches[1] }
-            throw 'PROBE_EXIT_FAILED'
+            if (!$AllowFailure) { throw 'PROBE_EXIT_FAILED' }
         }
         return $output.Trim()
     } finally { $process.Dispose() }
@@ -223,7 +224,46 @@ step=SETTINGS_IDENTITY
     }
     $stage = 'IDENTITY_SEPARATION'
     if ([IO.File]::ReadAllText((Join-Path $nativeSettings 'identity')) -ne 'native-only' -or [IO.File]::ReadAllText((Join-Path $nativeCurrent 'identity')) -ne 'native-only') { throw 'NATIVE_IDENTITY_CHANGED' }
+    $hostFailed = $false
+    if ($HostQualification) {
+        $stage = 'HOST_SOURCE_IDENTITY'
+        $sourceSha = Invoke-ProbeProcess 'git.exe' @('-C', $source, 'rev-parse', 'HEAD')
+        if ($sourceSha -notmatch '^[a-f0-9]{40}$') { throw 'HOST_SOURCE_ID_INVALID' }
+        $sourceDirty = Invoke-ProbeProcess 'git.exe' @('-C', $source, 'status', '--porcelain')
+        if ($sourceDirty) { throw 'HOST_SOURCE_DIRTY' }
+        $lockSha256 = Get-ProbeDigest (Join-Path $source 'package-lock.json')
+        $artifactSha256 = Get-ProbeDigest (Join-Path $source "artifacts/redacton-$version.tar.gz")
+        $stage = 'HOST_PYTHON_PREREQUISITES'
+        $pythonSetup = @'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+timeout 180 apt-get -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=30 update
+timeout 180 apt-get -qq -y --no-install-recommends -o Acquire::Retries=1 -o Acquire::http::Timeout=30 install python3-pip
+rm -rf /var/lib/apt/lists/*
+'@
+        [IO.File]::WriteAllText((Join-Path $temporary 'python.sh'), $pythonSetup.Replace("`r", ''), [Text.UTF8Encoding]::new($false))
+        $null = Invoke-ProbeProcess $wsl @('-d', $distro, '-u', 'root', '--exec', '/bin/bash', "$linuxTemporary/python.sh") 400
+        $stage = 'HOST_QUALIFICATION'
+        $hostOutput = Invoke-ProbeProcess $wsl @('-d', $distro, '-u', 'redacton', '--exec', '/home/redacton/nodes/node-v22.16.0-linux-x64/bin/node', '/home/redacton/work/scripts/qualify-wsl-host.mjs', $sourceSha, $lockSha256, $artifactSha256, '/home/redacton/work/artifacts') 1900 -AllowFailure
+        if ([Text.Encoding]::UTF8.GetByteCount($hostOutput) -gt 512KB) { throw 'HOST_EXPORT_LIMIT' }
+        $hostBundle = Join-Path $temporary 'host-export.json'
+        [IO.File]::WriteAllText($hostBundle, $hostOutput)
+        # Validate again on the Windows side before publishing any Linux record.
+        $validated = Invoke-ProbeProcess $node @((Join-Path $source 'scripts/qualify-wsl-host.mjs'), '--validate-export', $hostBundle, $sourceSha, $artifactSha256)
+        $hostValue = $validated | ConvertFrom-Json
+        $hostDestination = Join-Path $source 'qualification/results/wsl-host'
+        [IO.Directory]::CreateDirectory($hostDestination) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $hostDestination 'wsl-host-summary.json'), $validated)
+        foreach ($hostRow in $hostValue.rows) {
+            if ($hostRow.record) {
+                $major = $hostRow.node.Split('.')[0]
+                [IO.File]::WriteAllText((Join-Path $hostDestination "wsl-x64-$major.json"), ($hostRow.record | ConvertTo-Json -Depth 8 -Compress))
+            }
+            if ($hostRow.status -eq 'failed') { $hostFailed = $true }
+        }
+    }
     if (($rows | Where-Object status -eq 'failed').Count -gt 0) { $stage = 'INSTALLATION_ROWS'; throw 'INSTALLATION_ROW_FAILED' }
+    if ($hostFailed) { $stage = 'HOST_QUALIFICATION'; throw 'HOST_QUALIFICATION_FAILED' }
     $status = 'passed'
     $stage = 'COMPLETE'
     $exitCode = 0

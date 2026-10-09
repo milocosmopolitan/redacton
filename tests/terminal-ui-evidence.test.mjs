@@ -4,6 +4,8 @@ import {
   terminalUiDiagnostics,
   terminalUiFrame,
   terminalUiState,
+  windowsPtyDiagnostics,
+  windowsPtyState,
 } from '../scripts/terminal-ui-evidence.mjs';
 
 test('terminal UI diagnostics forward only bounded whitelisted fields', () => {
@@ -153,4 +155,36 @@ test('complete UI frames retain geometry without allowing arbitrary screen conte
     frames,
   );
   assert.ok(Buffer.byteLength(JSON.stringify(value)) < 4096);
+});
+
+test('Windows PTY diagnostics retain only fixed phases and unsigned API numbers', () => {
+  const state = {
+    code: 'WINDOWS_PTY_STATE',
+    phase: 'CREATE_CONSOLE',
+    win32: 5,
+    hresult: 0x80070005,
+  };
+  assert.deepEqual(windowsPtyState(state), state);
+  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(state)), [state]);
+  for (const patch of [
+    { phase: 'private' },
+    { win32: -1 },
+    { hresult: 0x100000000 },
+    { error: 'private' },
+    { win32: 'private' },
+  ]) {
+    assert.equal(windowsPtyState({ ...state, ...patch }), null);
+    assert.deepEqual(
+      windowsPtyDiagnostics(JSON.stringify({ ...state, ...patch })),
+      [],
+    );
+  }
+  const value = frame();
+  value.state.alive = false;
+  value.state.exitCode = 0xc0000005;
+  assert.deepEqual(terminalUiFrame(value), value);
+  for (const code of [-2, 0x100000000, 1.5]) {
+    value.state.exitCode = code;
+    assert.equal(terminalUiFrame(value), null);
+  }
 });

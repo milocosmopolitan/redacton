@@ -1,13 +1,18 @@
 """Check rendered focus without launching a host or importing terminal dependencies."""
 import ast
+import os
+import shutil
+import subprocess
+import tempfile
+import json
 import pathlib
 import re
 import types
 import unittest
 
 source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text())
-functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'startup_dialog']]
-scope = {'re': re}
+functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'startup_dialog', 'prepare_ui_companion']]
+scope = {'re': re, 'os': os, 'shutil': shutil, 'json': json}
 exec(compile(ast.Module(body=functions, type_ignores=[]), 'terminal-observation', 'exec'), scope)
 
 class TerminalObservationTest(unittest.TestCase):
@@ -22,6 +27,21 @@ class TerminalObservationTest(unittest.TestCase):
         buffer[1][0].reverse = False
         self.assertFalse(scope['focused']('Create draft'))
         self.assertFalse(scope['focused']('Validate'))
+
+    def test_portable_fixture_counter_is_independent_of_working_directory(self):
+        node = shutil.which('node')
+        self.assertIsNotNone(node)
+        with tempfile.TemporaryDirectory(prefix='redacton fixture 한글 ') as folder:
+            workspace = str(pathlib.Path(__file__).resolve().parent.parent)
+            companion = scope['prepare_ui_companion'](workspace, folder, node)
+            counter_script = os.path.join(folder,'ui-counter.mjs')
+            for _ in range(2):
+                child = subprocess.run([node,counter_script],cwd=tempfile.gettempdir(),capture_output=True,timeout=10)
+                self.assertEqual(child.returncode,0)
+                self.assertEqual(child.stdout,b'syntheticcred_ABCDEF0123456789\n')
+                self.assertEqual(child.stderr,child.stdout)
+            self.assertEqual(pathlib.Path(folder,'ui-execution-counter').read_text(),'xx')
+            self.assertNotIn('printf x >>',pathlib.Path(companion,'hooks/register.js').read_text())
 
     def test_onboarding_never_consumes_configuration_form_input(self):
         form = 'Local panel has keyboard focus. Never enter a credential. Project patterns require explicit load and trust. Press Enter to select.'

@@ -9,12 +9,19 @@ import {
   syntheticStorageReply,
 } from './fixtures/host.ts';
 
-function host(on: On, behavior = 'ok'): string[] {
+function host(
+  on: On,
+  behavior = 'ok',
+  commands?: { name: string; immediate?: true }[],
+): string[] {
   const calls: string[] = [];
   on('session.start', () => ({ cwd: '/synthetic' }));
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }));
   on('session.id', () => ({ value: 'synthetic-session' }));
-  on('command.register', (_$, e) => ({ value: { command: e.name } }));
+  on('command.register', (_$, e) => {
+    commands?.push({ name: e.name, immediate: e.immediate });
+    return { value: { command: e.name } };
+  });
   on('ui.log', () => ({ value: undefined }));
   on('ui.toast', () => ({ value: undefined }));
   on('ui.close', () => ({ value: undefined }));
@@ -140,6 +147,24 @@ test('OFF warning is present on the terminal AbovePrompt render tree', async ($,
     }),
   ).toBeDefined();
   await ui.unmount();
+});
+
+test('policy commands register for immediate mid-turn execution', async ($, on) => {
+  const commands: { name: string; immediate?: true }[] = [];
+  host(on, 'ok', commands);
+  await $.session.start({
+    surface: 'terminal',
+    isInteractive: true,
+    cwd: '/synthetic',
+  });
+  expect(
+    commands.filter(
+      (command) => command.name === 'redacton' || command.name === 'redactoff',
+    ),
+  ).toEqual([
+    { name: 'redacton', immediate: true },
+    { name: 'redactoff', immediate: true },
+  ]);
 });
 
 test('ON operation keeps protection after a mid-flight OFF command', async ($, on) => {
