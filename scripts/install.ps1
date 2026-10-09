@@ -11,6 +11,10 @@ $staging = $null
 $previous = $null
 $current = $null
 $stage = 'PLATFORM'
+$exitCode = 0
+$safeNodePlatform = 'unknown'
+$safeNodeArchitecture = 'unknown'
+$safeNodeVersion = 'unknown'
 try {
     # Windows PowerShell 5.1 may not load the RuntimeInformation facade. Native OS
     # architecture remains visible even when PowerShell runs under WOW64.
@@ -18,16 +22,29 @@ try {
     if ($env:OS -ne 'Windows_NT' -or $osArchitecture -ne 'AMD64') { throw 'Use native Windows x64 PowerShell. WSL uses install.sh in its Linux filesystem.' }
     if ($ReleaseVersion -eq '0.1.0') { throw 'Historical release is not a Windows artifact. Supply a new reviewed candidate release.' }
     $stage = 'NODE_LOOKUP'
-    $node = (Get-Command node -CommandType Application).Source
+    $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Path
+    if (!$node) { throw 'Native Node executable is unavailable.' }
     $stage = 'CLAUDE_LOOKUP'
     $null = Get-Command claude
-    $stage = 'NODE_VERSION'
-    $nodePlatform = & $node -p 'process.platform'
+    $stage = 'NODE_PLATFORM_INVOKE'
+    $nodePlatform = & $node -p 'process.platform' 2>$null
+    $stage = 'NODE_PLATFORM_VALIDATE'
+    if ($nodePlatform -in 'win32', 'linux', 'darwin') { $safeNodePlatform = $nodePlatform }
     if ($LASTEXITCODE -ne 0 -or $nodePlatform -ne 'win32') { throw 'Use native Windows Node.js.' }
-    $nodeArchitecture = & $node -p 'process.arch'
+    $stage = 'NODE_ARCHITECTURE_INVOKE'
+    $nodeArchitecture = & $node -p 'process.arch' 2>$null
+    $stage = 'NODE_ARCHITECTURE_VALIDATE'
+    if ($nodeArchitecture -in 'x64', 'arm64') { $safeNodeArchitecture = $nodeArchitecture }
     if ($LASTEXITCODE -ne 0 -or $nodeArchitecture -ne 'x64') { throw 'Use native x64 Node.js.' }
-    $v = [version](& $node -p 'process.versions.node')
-    if ($LASTEXITCODE -ne 0 -or !(($v.Major -eq 22 -and $v -ge [version]'22.16.0') -or ($v.Major -eq 24 -and $v -ge [version]'24.21.0'))) { throw 'Use Node 22.16.0+ (22.x) or 24.21.0+ (24.x).' }
+    $stage = 'NODE_VERSION_INVOKE'
+    $nodeVersion = & $node -p 'process.versions.node' 2>$null
+    $stage = 'NODE_VERSION_VALIDATE'
+    if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,3}$') { throw 'Invalid Node version.' }
+    $safeNodeVersion = $nodeVersion
+    $versionParts = $nodeVersion.Split('.')
+    $nodeMajor = [int]$versionParts[0]
+    $nodeMinor = [int]$versionParts[1]
+    if (!(($nodeMajor -eq 22 -and $nodeMinor -ge 16) -or ($nodeMajor -eq 24 -and $nodeMinor -ge 21))) { throw 'Use Node 22.16.0+ (22.x) or 24.21.0+ (24.x).' }
     $stage = 'INSTALL_DIRECTORY'
     if (![IO.Path]::IsPathRooted($InstallDirectory)) { throw 'Use an absolute dedicated directory.' }
     $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
@@ -97,7 +114,7 @@ try {
 }catch{process.exit(1)}
 '@
     $stage = 'SELF_CHECK'
-    & $node -e $probe $root
+    $null = & $node -e $probe $root 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'Readiness self-check failed.' }
     $stage = 'ACTIVATION'
     $current = Join-Path $InstallDirectory 'current'
@@ -111,9 +128,20 @@ try {
     Write-Output ("claude --plugin-dir '" + $current.Replace("'", "''") + "'")
 } catch {
     # Emit only a finite stage and fixed guidance, never exception text or paths.
-    [Console]::Error.WriteLine("Redacton: INSTALL_$stage failed. Check Node/Claude prerequisites, reviewed archive digest and a writable short path. Existing installation preserved.")
-    exit 1
+    [Console]::Error.WriteLine("Redacton: INSTALL_$stage failed. Node platform=$safeNodePlatform arch=$safeNodeArchitecture version=$safeNodeVersion. Check Node/Claude prerequisites, reviewed archive digest and a writable short path. Existing installation preserved.")
+    $exitCode = 1
 } finally {
-    if ($previous -and !(Test-Path -LiteralPath $current)) { Move-Item -LiteralPath $previous -Destination $current }
-    if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    try {
+        if ($previous -and !(Test-Path -LiteralPath $current)) { Move-Item -LiteralPath $previous -Destination $current }
+    } catch {
+        [Console]::Error.WriteLine('Redacton: INSTALL_ROLLBACK failed. Previous installation remains in its backup directory; restore it before launching.')
+        $exitCode = 1
+    }
+    try {
+        if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    } catch {
+        [Console]::Error.WriteLine('Redacton: INSTALL_CLEANUP failed. Temporary installation data remains in the dedicated installation directory.')
+        $exitCode = 1
+    }
 }
+exit $exitCode

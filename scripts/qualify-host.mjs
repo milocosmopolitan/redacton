@@ -12,12 +12,21 @@ if (sha.status !== 0 || !/^[a-f0-9]{40}\s*$/.test(sha.stdout))
 const dirty = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
 if (dirty.status !== 0 || dirty.stdout.trim()) throw new Error('SOURCE_DIRTY');
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+const packageOnly = process.argv.includes('--package-only');
 const gates = Object.fromEntries(requiredGates.map((key) => [key, 'blocked']));
-const host = spawnSync(process.env.CLAUDE_BINARY ?? 'claude', ['--version'], {
-  encoding: 'utf8',
-  timeout: 10000,
-});
-if (host.status !== 0 || !host.stdout.startsWith('2.1.294 '))
+const gateCodes = Object.fromEntries(
+  requiredGates.map((key) => [
+    key,
+    packageOnly ? 'NOT_RUN' : 'MANUAL_REQUIRED',
+  ]),
+);
+const host = packageOnly
+  ? { status: null, stdout: '' }
+  : spawnSync(process.env.CLAUDE_BINARY ?? 'claude', ['--version'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+if (!packageOnly && (host.status !== 0 || !host.stdout.startsWith('2.1.294 ')))
   throw new Error('PINNED_HOST_UNAVAILABLE');
 const archive = await readFile(`artifacts/redacton-${pkg.version}.tar.gz`);
 const temp = await mkdtemp(join(tmpdir(), 'redacton-ci-host-'));
@@ -25,7 +34,7 @@ const pluginRoot = join(temp, `redacton-${pkg.version}`);
 function run(gate, script, ...args) {
   // Harness stdout/stderr is discarded. Only a fixed gate and result leave this wrapper.
   const result = spawnSync(process.execPath, [script, ...args], {
-    timeout: 240000,
+    timeout: gate === 'terminal-ui' ? 450000 : 240000,
     maxBuffer: 1024 * 1024,
     encoding: 'utf8',
     env: {
@@ -34,8 +43,29 @@ function run(gate, script, ...args) {
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     },
   });
-  gates[gate] = result.status === 0 && !result.error ? 'passed' : 'failed';
-  console.log(JSON.stringify({ gate, status: gates[gate] }));
+  gates[gate] =
+    result.status === 0 && !result.error
+      ? 'passed'
+      : result.status === 2 &&
+          !result.error &&
+          ['toggle-races', 'terminal-ui'].includes(gate)
+        ? 'blocked'
+        : 'failed';
+  gateCodes[gate] =
+    gates[gate] === 'passed'
+      ? 'PASS'
+      : gates[gate] === 'blocked'
+        ? gate === 'toggle-races'
+          ? 'RACE_PHASE_UNAVAILABLE'
+          : 'PREREQUISITE_UNAVAILABLE'
+        : result.error?.code === 'ETIMEDOUT'
+          ? 'TIMEOUT'
+          : result.error
+            ? 'PROCESS_FAILED'
+            : 'PROBE_FAILED';
+  console.log(
+    JSON.stringify({ gate, status: gates[gate], code: gateCodes[gate] }),
+  );
 }
 try {
   for (const [path, bytes] of readTar(archive)) {
@@ -66,30 +96,51 @@ try {
     plugin.version !== pkg.version
   )
     throw new Error('ARTIFACT_SOURCE_IDENTITY_MISMATCH');
-  run('sdk', 'scripts/test-mod.mjs', '--validate');
+  if (!packageOnly) run('sdk', 'scripts/test-mod.mjs', '--validate');
   if (gates.sdk === 'passed') run('sdk', 'scripts/test-mod.mjs');
   run('package', 'scripts/verify-artifact.mjs', '--native');
   if (gates.package === 'passed')
-    run('package', 'scripts/verify-installed-artifact.mjs');
-  for (const [gate, mode] of [
-    ['prompt', 'prompt'],
-    ['read', 'read'],
-    ['bash', 'bash'],
-    ['off', 'off'],
-    ['permission-denial', 'denied-bash'],
-  ])
-    run(gate, 'qualification/integration-host.mjs', mode);
-  run(
-    'guarded-errors',
-    'qualification/host-boundary-host.mjs',
-    'guarded-catch-failure',
-  );
-  if (gates['guarded-errors'] === 'passed')
-    run('guarded-errors', 'qualification/failure-host.mjs');
-  run('sessions', 'qualification/session-host.mjs');
-  // Cancellation uses Unix process groups. Windows remains blocked until an actual portable regression exists.
-  if (process.platform !== 'win32')
-    run('cancellation', 'qualification/cancellation-host.mjs');
+    run(
+      'package',
+      'scripts/verify-installed-artifact.mjs',
+      ...(packageOnly ? ['--fixture-claude'] : []),
+    );
+  if (!packageOnly) {
+    for (const [gate, mode] of [
+      ['prompt', 'prompt'],
+      ['read', 'read'],
+      ['bash', 'bash'],
+      ['off', 'off'],
+      ['permission-denial', 'denied-bash'],
+    ])
+      run(gate, 'qualification/integration-host.mjs', mode);
+    if (gates.off === 'passed')
+      run('off', 'qualification/stream-session-host.mjs');
+    run(
+      'guarded-errors',
+      'qualification/host-boundary-host.mjs',
+      'guarded-catch-failure',
+    );
+    if (gates['guarded-errors'] === 'passed')
+      run('guarded-errors', 'qualification/failure-host.mjs');
+    run('sessions', 'qualification/session-host.mjs');
+    // Cancellation uses Unix process groups. Windows remains blocked until an actual portable regression exists.
+    if (process.platform !== 'win32')
+      run('cancellation', 'qualification/cancellation-host.mjs');
+    else gateCodes.cancellation = 'PLATFORM_UNAVAILABLE';
+    run('toggle-races', 'qualification/races-host.mjs');
+    if (process.platform !== 'win32')
+      run('terminal-ui', 'scripts/qualify-ui.mjs');
+    else gateCodes['terminal-ui'] = 'PLATFORM_UNAVAILABLE';
+  }
+  const wsl =
+    process.platform === 'linux' &&
+    /microsoft|wsl/i.test(await readFile('/proc/sys/kernel/osrelease', 'utf8'));
+  if (
+    wsl &&
+    !/wsl2/i.test(await readFile('/proc/sys/kernel/osrelease', 'utf8'))
+  )
+    throw new Error('WSL2_REQUIRED');
   const value = {
     schemaVersion: 1,
     sourceSha: sha.stdout.trim(),
@@ -98,19 +149,22 @@ try {
     node: process.version,
     claude: '2.1.294',
     engine: pkg.dependencies['@redact-secret/core'],
-    platform: process.platform,
+    platform: wsl ? 'wsl' : process.platform,
     arch: process.arch,
     emulated: false,
+    environment: wsl ? 'wsl2' : 'native',
     gates,
+    gateCodes,
   };
   const destination = resolve(
-    process.argv[2] ?? 'qualification/results/ci-evidence',
+    process.argv.slice(2).find((argument) => !argument.startsWith('--')) ??
+      'qualification/results/ci-evidence',
   );
   await mkdir(destination, { recursive: true });
   await writeFile(
     join(
       destination,
-      `${process.platform}-${process.arch}-${process.versions.node.split('.')[0]}.json`,
+      `${value.platform}-${process.arch}-${process.versions.node.split('.')[0]}.json`,
     ),
     `${JSON.stringify(value, null, 2)}\n`,
   );

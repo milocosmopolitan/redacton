@@ -23,13 +23,17 @@ const evidence = () => ({
   platform: 'linux',
   arch: 'x64',
   emulated: false,
+  environment: 'native',
   gates: Object.fromEntries(requiredGates.map((key) => [key, 'passed'])),
+  gateCodes: Object.fromEntries(requiredGates.map((key) => [key, 'PASS'])),
 });
 test('skipped manual evidence cannot qualify a platform', () => {
   const value = evidence();
   value.gates['terminal-ui'] = 'blocked';
+  value.gateCodes['terminal-ui'] = 'MANUAL_REQUIRED';
   assert.equal(validateEvidence(value, sha), false);
   value.gates.prompt = 'failed';
+  value.gateCodes.prompt = 'PROBE_FAILED';
   assert.equal(validateEvidence(value, sha), false);
 });
 test('qualification rejects stale, emulated, unpinned, or arbitrary-content evidence', () => {
@@ -114,6 +118,7 @@ test('release gate requires all 14 exact-commit rows and the actual qualified ar
           JSON.stringify({
             ...evidence(),
             platform,
+            environment: platform === 'wsl' ? 'wsl2' : 'native',
             arch,
             node,
             sourceSha,

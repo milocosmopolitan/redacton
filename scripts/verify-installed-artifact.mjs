@@ -42,6 +42,10 @@ try {
     if (!windows) await chmod(stub, 0o755);
     installerPath = `${bin}${windows ? ';' : ':'}${installerPath}`;
   }
+  const environment = { ...process.env };
+  for (const key of Object.keys(environment))
+    if (key.toLowerCase() === 'path') delete environment[key];
+  environment[windows ? 'Path' : 'PATH'] = installerPath;
   const command = windows ? 'powershell.exe' : 'bash';
   const args = windows
     ? [
@@ -64,8 +68,7 @@ try {
       encoding: 'utf8',
       timeout: 60000,
       env: {
-        ...process.env,
-        PATH: installerPath,
+        ...environment,
         REDACTON_RELEASE_VERSION: version,
         REDACTON_ARCHIVE_SHA256: expected,
         REDACTON_ARCHIVE_PATH: archive,

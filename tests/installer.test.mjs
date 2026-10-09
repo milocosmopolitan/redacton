@@ -18,6 +18,14 @@ import { gzipSync } from 'node:zlib';
 import { archiveZip } from '../scripts/artifact-archive.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+function environmentWithPath(path) {
+  const env = { ...process.env };
+  // Avoid competing Path/PATH entries in the Windows child environment block.
+  for (const key of Object.keys(env))
+    if (key.toLowerCase() === 'path') delete env[key];
+  env[process.platform === 'win32' ? 'Path' : 'PATH'] = path;
+  return env;
+}
 test('Candidate installation preserves existing installs across hash and readiness failures', () => {
   const dir = mkdtempSync(join(tmpdir(), 'redacton installer 한글 '));
   try {
@@ -99,8 +107,9 @@ test('Candidate installation preserves existing installs across hash and readine
         encoding: 'utf8',
         timeout: 20000,
         env: {
-          ...process.env,
-          PATH: `${bin}${windows ? ';' : ':'}${process.env.PATH}`,
+          ...environmentWithPath(
+            `${bin}${windows ? ';' : ':'}${process.env.PATH}`,
+          ),
           REDACTON_INSTALL_DIR: install,
           REDACTON_RELEASE_VERSION: '0.2.0',
           REDACTON_ARCHIVE_PATH: archive,
@@ -141,8 +150,7 @@ test('Candidate installation preserves existing installs across hash and readine
       {
         encoding: 'utf8',
         env: {
-          ...process.env,
-          PATH: isolated,
+          ...environmentWithPath(isolated),
           REDACTON_RELEASE_VERSION: '0.2.0',
           REDACTON_ARCHIVE_SHA256: hash,
           REDACTON_ARCHIVE_PATH: archive,

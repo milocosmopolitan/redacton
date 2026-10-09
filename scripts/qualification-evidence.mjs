@@ -13,6 +13,17 @@ export const requiredGates = [
   'config-races',
   'terminal-ui',
 ];
+export const gateCodes = {
+  passed: ['PASS', 'MANUAL_REVIEWED_PASS'],
+  failed: ['PROBE_FAILED', 'TIMEOUT', 'PROCESS_FAILED'],
+  blocked: [
+    'MANUAL_REQUIRED',
+    'PLATFORM_UNAVAILABLE',
+    'NOT_RUN',
+    'RACE_PHASE_UNAVAILABLE',
+    'PREREQUISITE_UNAVAILABLE',
+  ],
+};
 export function validateEvidence(value, sourceSha) {
   if (
     value?.schemaVersion !== 1 ||
@@ -26,7 +37,9 @@ export function validateEvidence(value, sourceSha) {
     !['darwin', 'linux', 'win32', 'wsl'].includes(value.platform) ||
     !['x64', 'arm64'].includes(value.arch) ||
     value.emulated !== false ||
+    value.environment !== (value.platform === 'wsl' ? 'wsl2' : 'native') ||
     !value.gates ||
+    !value.gateCodes ||
     Object.keys(value).some(
       (key) =>
         ![
@@ -40,12 +53,17 @@ export function validateEvidence(value, sourceSha) {
           'platform',
           'arch',
           'emulated',
+          'environment',
           'gates',
+          'gateCodes',
         ].includes(key),
     ) ||
     Object.keys(value.gates).some((key) => !requiredGates.includes(key)) ||
+    Object.keys(value.gateCodes).some((key) => !requiredGates.includes(key)) ||
     requiredGates.some(
-      (key) => !['passed', 'failed', 'blocked'].includes(value.gates[key]),
+      (key) =>
+        !['passed', 'failed', 'blocked'].includes(value.gates[key]) ||
+        !gateCodes[value.gates[key]]?.includes(value.gateCodes[key]),
     )
   )
     throw new Error('EVIDENCE_INVALID');
