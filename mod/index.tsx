@@ -438,6 +438,9 @@ export function register(on: On) {
     runtime.healthEpoch += 1;
     runtime.personalLoad = 'pending';
     runtime.settingsCode = '';
+    const controller = state;
+    const owner = config;
+    const generation = runtime.generation;
     await $.command.register({
       name: 'redacton',
       description: 'Request local credential protection for new operations',
@@ -454,8 +457,10 @@ export function register(on: On) {
       description: 'Open local configuration, including during an active tool',
       immediate: true,
     });
-    await ensurePersonal($, state, config, settings, runtime);
-    await checkReadiness($, state, runtime, config.snapshot());
+    if (runtime.generation !== generation) return next(e);
+    await ensurePersonal($, controller, owner, settings, runtime);
+    if (runtime.generation === generation)
+      await checkReadiness($, controller, runtime, owner.snapshot());
     return next(e);
   }).catch((_$, e, next) => next(e));
 
