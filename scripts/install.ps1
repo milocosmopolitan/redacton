@@ -10,12 +10,22 @@ $ErrorActionPreference = 'Stop'
 $staging = $null
 $previous = $null
 $current = $null
-$stage = 'PREREQUISITES'
+$stage = 'PLATFORM'
 try {
-    if ($env:OS -ne 'Windows_NT' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64') { throw 'Use native Windows x64 PowerShell. WSL uses install.sh in its Linux filesystem.' }
+    # Windows PowerShell 5.1 may not load the RuntimeInformation facade. Native OS
+    # architecture remains visible even when PowerShell runs under WOW64.
+    $osArchitecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    if ($env:OS -ne 'Windows_NT' -or $osArchitecture -ne 'AMD64') { throw 'Use native Windows x64 PowerShell. WSL uses install.sh in its Linux filesystem.' }
     if ($ReleaseVersion -eq '0.1.0') { throw 'Historical release is not a Windows artifact. Supply a new reviewed candidate release.' }
+    $stage = 'NODE_LOOKUP'
     $node = (Get-Command node -CommandType Application).Source
+    $stage = 'CLAUDE_LOOKUP'
     $null = Get-Command claude
+    $stage = 'NODE_VERSION'
+    $nodePlatform = & $node -p 'process.platform'
+    if ($LASTEXITCODE -ne 0 -or $nodePlatform -ne 'win32') { throw 'Use native Windows Node.js.' }
+    $nodeArchitecture = & $node -p 'process.arch'
+    if ($LASTEXITCODE -ne 0 -or $nodeArchitecture -ne 'x64') { throw 'Use native x64 Node.js.' }
     $v = [version](& $node -p 'process.versions.node')
     if ($LASTEXITCODE -ne 0 -or !(($v.Major -eq 22 -and $v -ge [version]'22.16.0') -or ($v.Major -eq 24 -and $v -ge [version]'24.21.0'))) { throw 'Use Node 22.16.0+ (22.x) or 24.21.0+ (24.x).' }
     $stage = 'INSTALL_DIRECTORY'
