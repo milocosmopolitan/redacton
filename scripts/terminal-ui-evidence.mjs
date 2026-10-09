@@ -112,6 +112,81 @@ export function terminalUiState(value) {
   };
 }
 
+export function terminalUiFrame(value) {
+  if (
+    !keys(value, 'code,columns,index,state') ||
+    value.code !== 'TERMINAL_UI_FRAME' ||
+    ![80, 140].includes(value.columns) ||
+    !Number.isSafeInteger(value.index) ||
+    value.index < 0 ||
+    value.index > 7
+  )
+    return null;
+  const state = value.state;
+  const bounded = (value, max) =>
+    Number.isSafeInteger(value) && value >= 0 && value <= max;
+  const flags = (value, names) =>
+    keys(value, names) &&
+    Object.values(value).every((item) => typeof item === 'boolean');
+  if (
+    !keys(
+      state,
+      'actions,alive,controls,cursor,cursorLabelRow,elapsedMs,exitCode,notices,pane,phase,stage',
+    ) ||
+    !stages.has(state.stage) ||
+    !['entry', 'settled', 'final'].includes(state.phase) ||
+    typeof state.alive !== 'boolean' ||
+    !(
+      state.exitCode === null ||
+      (Number.isSafeInteger(state.exitCode) &&
+        state.exitCode >= -1 &&
+        state.exitCode <= 255)
+    ) ||
+    state.alive !== (state.exitCode === null) ||
+    !bounded(state.elapsedMs, 180000) ||
+    !keys(state.cursor, 'column,row') ||
+    !bounded(state.cursor.row, 39) ||
+    !bounded(state.cursor.column, value.columns - 1) ||
+    !['ruleId', 'prefix', 'length', 'unknown'].includes(state.cursorLabelRow) ||
+    !flags(state.pane, 'focused,legacyFocused,unfocused') ||
+    !flags(state.notices, 'draftReady,invalidCandidate,rejected') ||
+    !keys(
+      state.actions,
+      'createDraft,focusTabs,lengthClears,lengthEntries,lengthSubmits,prefixEntries,ruleIdEntries,validate',
+    ) ||
+    !Object.values(state.actions).every((item) => bounded(item, 12)) ||
+    !keys(state.controls, 'createDraft,length,prefix,ruleId,validate')
+  )
+    return null;
+  for (const [key, characters] of Object.entries({
+    ruleId: 6,
+    prefix: 13,
+    length: 10,
+    createDraft: 11,
+    validate: 8,
+  })) {
+    const control = state.controls[key];
+    if (control === null) continue;
+    if (
+      !keys(
+        control,
+        'bold,characters,colored,column,endColumn,endRow,reverse,row',
+      ) ||
+      control.characters !== characters ||
+      !bounded(control.row, 39) ||
+      !bounded(control.endRow, 39) ||
+      control.endRow < control.row ||
+      !bounded(control.column, value.columns - 1) ||
+      !bounded(control.endColumn, value.columns - 1) ||
+      !['reverse', 'bold', 'colored'].every((key) =>
+        bounded(control[key], characters),
+      )
+    )
+      return null;
+  }
+  return value;
+}
+
 export function terminalUiDiagnostics(stdout) {
   const output = [];
   for (const line of stdout.split('\n')) {
@@ -124,7 +199,9 @@ export function terminalUiDiagnostics(stdout) {
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
     const keys = Object.keys(value).sort().join(',');
-    if (keys === 'code' && codes.has(value.code)) {
+    if (terminalUiFrame(value)) {
+      output.push(terminalUiFrame(value));
+    } else if (keys === 'code' && codes.has(value.code)) {
       output.push({ code: value.code });
     } else if (
       [
@@ -148,7 +225,7 @@ export function terminalUiDiagnostics(stdout) {
         ...('state' in value ? { state: terminalUiState(value.state) } : {}),
       });
     }
-    if (output.length === 8) break;
+    if (output.length === 22) break;
   }
   return output;
 }

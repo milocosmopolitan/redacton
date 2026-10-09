@@ -2,7 +2,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { terminalUiChecks, terminalUiState } from './terminal-ui-evidence.mjs';
+import {
+  terminalUiChecks,
+  terminalUiFrame,
+  terminalUiState,
+} from './terminal-ui-evidence.mjs';
 
 if (!['darwin', 'linux'].includes(process.platform))
   throw new Error('TERMINAL_UI_PLATFORM_UNAVAILABLE');
@@ -87,6 +91,23 @@ try {
       continue;
     }
     const result = value.result;
+    if (!Array.isArray(result.offFrames) || result.offFrames.length > 8) {
+      console.log(JSON.stringify({ code: 'TERMINAL_UI_STATE_INVALID' }));
+      failed = true;
+    } else {
+      for (const [index, state] of result.offFrames.entries()) {
+        const frame = terminalUiFrame({
+          code: 'TERMINAL_UI_FRAME',
+          columns,
+          index,
+          state,
+        });
+        if (!frame || Buffer.byteLength(JSON.stringify(frame)) > 4096) {
+          console.log(JSON.stringify({ code: 'TERMINAL_UI_STATE_INVALID' }));
+          failed = true;
+        } else console.log(JSON.stringify(frame));
+      }
+    }
     const required = terminalUiChecks;
     const missing = required.filter((key) => result?.[key] !== true);
     const state = terminalUiState({

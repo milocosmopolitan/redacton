@@ -63,6 +63,11 @@ raw = ''
 exit_code = None
 stage = 'startup'
 off_action_counts = {'createDraft': 0, 'validate': 0, 'focusTabs': 0}
+off_input_counts = {'ruleIdEntries': 0, 'prefixEntries': 0, 'lengthClears': 0, 'lengthEntries': 0, 'lengthSubmits': 0}
+off_frames = []
+last_observed_stage = None
+off_length_settled = False
+probe_start = time.monotonic()
 stage_time = time.monotonic()
 trust_answered = False
 key_answered = False
@@ -83,6 +88,17 @@ def poll():
     return exit_code
 
 def send(value, enter=False):
+    if value and stage == 'off-form':
+        off_input_counts['ruleIdEntries'] += 1
+    if value and stage == 'off-id':
+        off_input_counts['prefixEntries'] += 1
+    if stage == 'off-prefix':
+        if value == '\x15':
+            off_input_counts['lengthClears'] += 1
+        elif value:
+            off_input_counts['lengthEntries'] += 1
+        if enter:
+            off_input_counts['lengthSubmits'] += 1
     if enter and stage == 'off-length':
         off_action_counts['createDraft'] += 1
     if enter and stage == 'off-draft':
@@ -128,6 +144,30 @@ def focused(label):
             return True
     return False
 
+def control_geometry(label):
+    text = '\n'.join(screen.display)
+    positions = []
+    for row, line in enumerate(screen.display):
+        positions.extend((row, column) for column in range(len(line)))
+        if row + 1 < len(screen.display):
+            positions.append(None)
+    pattern = r'[\s│┃]*'.join(re.escape(char) for char in label if not char.isspace())
+    match = re.search(pattern, text)
+    if not match:
+        return None
+    cells = [positions[index] for index in range(match.start(), match.end()) if not text[index].isspace() and text[index] not in '│┃']
+    styles = [screen.buffer[row][column] for row, column in cells]
+    return {'row': cells[0][0], 'column': cells[0][1], 'endRow': cells[-1][0], 'endColumn': cells[-1][1], 'characters': len(cells), 'reverse': sum(bool(cell.reverse) for cell in styles), 'bold': sum(bool(cell.bold) for cell in styles), 'colored': sum(cell.fg != 'default' for cell in styles)}
+
+def off_frame(phase):
+    if len(off_frames) >= 8:
+        return
+    view = ' '.join(displayed().split())
+    controls = {key: control_geometry(label) for key, label in [('ruleId', 'Rule ID'), ('prefix', 'Public prefix,'), ('length', 'Run length,'), ('createDraft', 'Create draft'), ('validate', 'Validate')]}
+    cursor_field = next((key for key in ['ruleId', 'prefix', 'length'] if controls[key] and controls[key]['row'] <= screen.cursor.y <= controls[key]['endRow'] and screen.cursor.x >= controls[key]['column']), 'unknown')
+    child_exit = poll()
+    off_frames.append({'stage': stage, 'phase': phase, 'alive': child_exit is None, 'exitCode': child_exit, 'elapsedMs': min(180000, int((time.monotonic() - probe_start) * 1000)), 'cursor': {'row': screen.cursor.y, 'column': screen.cursor.x}, 'cursorLabelRow': cursor_field, 'pane': {'focused': visible_words('Local panel has keyboard focus', view), 'unfocused': visible_words('WARNING: local panel is not focused', view), 'legacyFocused': 'Local panel has keyboard focus' in view}, 'notices': {'invalidCandidate': visible_words('INVALID_CANDIDATE', view), 'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view)}, 'actions': {**off_action_counts, **off_input_counts}, 'controls': controls})
+
 try:
     deadline = time.monotonic() + float(os.environ.get('REDACTON_UI_SECONDS', '45'))
     while time.monotonic() < deadline:
@@ -162,6 +202,13 @@ try:
             observations['apiKeyAnswered'] = True
             raw = ''
         if ux_mode:
+            if stage != last_observed_stage:
+                last_observed_stage = stage
+                if stage in ['off-form', 'off-id', 'off-prefix', 'off-length', 'off-draft', 'off-validate']:
+                    off_frame('entry')
+            if stage == 'off-length' and time.monotonic() - stage_time > 1 and not off_length_settled:
+                off_length_settled = True
+                off_frame('settled')
             if stage == 'startup' and 'Protect ready' in view:
                 send('/redact:')
                 stage = 'autocomplete'; stage_time = time.monotonic()
@@ -327,6 +374,8 @@ try:
     observations['statusCustomCounts']=re.findall(r'(\d+) custom rules:',view+raw)
     observations['completed'] = stage == 'complete'
     observations['finalStage'] = stage
+    off_frame('final')
+    observations['offFrames'] = off_frames
     observations['focusedButton'] = next((label for label in ['Create draft', 'Validate', 'Synthetic preview', 'Apply session', 'Revert', 'Remove rule'] if focused(label)), None)
     observations['offReceiptState'] = {'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view), 'editingDraft': '· editing · base' in view}
     observations['offActionCounts'] = off_action_counts
