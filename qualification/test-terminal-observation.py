@@ -73,15 +73,15 @@ class TerminalObservationTest(unittest.TestCase):
         self.assertEqual(scope['control_geometry']('Create draft'), {'row': 0, 'column': 0, 'endRow': 1, 'endColumn': 4, 'characters': 11, 'reverse': 11, 'bold': 0, 'colored': 0})
         self.assertIsNone(scope['control_geometry']('Validate'))
 
-    def test_visible_labels_and_stale_focus_never_authorize_field_input(self):
+    def test_expected_input_focus_does_not_depend_on_hidden_cursor_location(self):
         # The failed 140-column CI frames showed all labels but only Rule ID bold.
         lines = [' ' * 78 + 'Rule ID', ' ' * 78 + 'Public prefix,', ' ' * 78 + 'Run length,']
         buffer = self.screen(lines)
         for cell in buffer[0].values():
             cell.bold = True
         screen = scope['screen']
-        screen.cursor = types.SimpleNamespace(y=2, x=100)
-        self.assertFalse(scope['input_active']('Rule ID'))
+        screen.cursor = types.SimpleNamespace(y=39, x=139, hidden=True)
+        self.assertTrue(scope['input_active']('Rule ID'))
         self.assertFalse(scope['input_active']('Public prefix,'))
         self.assertFalse(scope['input_active']('Run length,'))
         screen.cursor = types.SimpleNamespace(y=0, x=95)
@@ -95,6 +95,8 @@ class TerminalObservationTest(unittest.TestCase):
         self.assertFalse(scope['input_active']('Rule ID'))
         self.assertTrue(scope['input_active']('Public prefix,'))
         screen.cursor.x = 80
+        self.assertTrue(scope['input_active']('Public prefix,'))
+        buffer[1][78].bold = False
         self.assertFalse(scope['input_active']('Public prefix,'))
         self.assertFalse(scope['input_active']('missing field'))
 
