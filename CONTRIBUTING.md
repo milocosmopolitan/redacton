@@ -35,7 +35,7 @@ node qualification/host-boundary-host.mjs unguarded-catch-failure
 
 The last mode intentionally reproduces the host's raw fallback and must not be treated as a protection pass. The terminal UI runner requires a temporary pyte installation. These are actual-host regressions, not replacements for unit checks; disclose any path that was not rerun.
 
-Published Alpha 1 evidence is immutable at its release tag. Refactoring source does not requalify that artifact or unrelated platforms. Run the relevant current checks before making new compatibility claims. Desktop, other platforms and an independent production-accuracy claim require their own evidence.
+Published package evidence is immutable at its release tag. Refactoring source does not requalify that artifact or unrelated platforms. Run the relevant current checks before making new compatibility claims. Desktop, other platforms and an independent production-accuracy claim require their own evidence.
 
 ## Reviews and releases
 

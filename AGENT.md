@@ -4,16 +4,16 @@ Read this file explicitly before working on this repository. The filename is int
 
 ## Context
 
-Redacton is an experimental local credential-protection Claude Code Mod using Redact Secret. TypeScript source is split between the host Mod and a separate prebuilt Node helper. README.md and ARCHITECTURE.md describe current behavior; docs/COMPATIBILITY.md links immutable published evidence and distinguishes it from current-source validation.
+Redacton is a local credential-protection Claude Code Mod using Redact Secret. TypeScript source is split between the host Mod and a separate prebuilt Node helper. README.md and ARCHITECTURE.md describe current behavior; docs/COMPATIBILITY.md links immutable published evidence and distinguishes it from current-source validation.
 
-Primary commands are exactly `/redacton` and `/redactoff`. New sessions request ON; OFF produces an immediate warning and a persistent visible warning. OFF bypasses scanning. No observation mode is part of Alpha 1.
+Primary commands are exactly `/redacton` and `/redactoff`. New sessions request ON; OFF produces an immediate warning and a persistent visible warning. OFF bypasses scanning. No observation mode is supported.
 
 ## Before editing
 
 1. Read README.md, ARCHITECTURE.md, CONTRIBUTING.md, and the relevant issue.
 2. Inspect existing implementation and installed generated SDK types.
 3. Distinguish confirmed host behavior from assumptions.
-4. Keep scope aligned with the Alpha 1 epic and its dependency order.
+4. Keep scope aligned with the implementation epic and its dependency order.
 
 If the host cannot reliably replace or withhold selected content, document the blocker before broadening the feature or making protection claims.
 
@@ -41,7 +41,7 @@ If the host cannot reliably replace or withhold selected content, document the b
 - Do not rewrite tool arguments or authentication parameters.
 - UI and diagnostics use fixed error codes, canonical types, counts, and opaque identifiers.
 - No input previews, secret hashes, raw paths, arbitrary exception text, or raw stderr in diagnostics.
-- No live credential verification, telemetry, vault/restore, or PII features in Alpha 1.
+- No live credential verification, telemetry, vault/restore, or PII features in the supported scope.
 
 ## Verification
 

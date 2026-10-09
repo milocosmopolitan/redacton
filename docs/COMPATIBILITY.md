@@ -1,8 +1,8 @@
 # Compatibility and evidence
 
-The published [v0.1.0-alpha.1 prerelease](https://github.com/milocosmopolitan/redacton/releases/tag/v0.1.0-alpha.1) preserves the evaluated artifact and complete evidence. Current source can change independently; historical results do not automatically qualify a refactored binary. Reusable host regressions remain in `qualification/` and current validation commands are in [CONTRIBUTING](../CONTRIBUTING.md).
+The [published package](https://github.com/milocosmopolitan/redacton/releases/tag/v0.1.0-alpha.1) preserves the evaluated artifact and complete evidence. Current source can change independently; historical results do not automatically qualify a refactored binary. Reusable host regressions remain in `qualification/` and current validation commands are in [CONTRIBUTING](../CONTRIBUTING.md).
 
-## Published Alpha 1 scope
+## Published package scope
 
 Claude Code/generated SDK 2.1.294, macOS ARM64, Node 22.16.0 host. Node 24.21.0 separately passed 25 helper/protocol/state/adapter tests, not a Node 24 host installation. Linux, Windows, Desktop, other hosts/architectures, interactive watch/reload, arbitrary scrolling, and every terminal size were not qualified.
 
