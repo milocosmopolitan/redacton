@@ -133,12 +133,37 @@ async function hostIdentity(): Promise<string> {
   }
   return createHash('sha256').update(namespace).digest('hex');
 }
+export function procfsProcessStart(
+  value: string,
+  expectedPid: number,
+): string | null {
+  const opening = value.indexOf(' (');
+  const closing = value.lastIndexOf(') ');
+  if (
+    !Number.isSafeInteger(expectedPid) ||
+    expectedPid < 1 ||
+    opening < 1 ||
+    closing <= opening ||
+    value.slice(0, opening) !== String(expectedPid)
+  )
+    return null;
+  // comm can contain spaces and parentheses; fields begin after its final close.
+  const start = value.slice(closing + 2).split(' ')[19];
+  return start && /^[0-9]+$/.test(start) ? start : null;
+}
 async function processStart(pid: number): Promise<string | null> {
   if (process.platform === 'linux') {
     try {
-      const value = await readFile(`/proc/${pid}/stat`, 'utf8');
-      const start = value.slice(value.lastIndexOf(')') + 2).split(' ')[19];
-      return start && /^[0-9]+$/.test(start) ? start : null;
+      const self = await readFile('/proc/self/stat', 'utf8');
+      const selfIdentity = procfsProcessStart(self, process.pid);
+      // A host-mounted procfs can expose another PID numbering scheme. Never
+      // treat unrelated process metadata as evidence that a live owner died.
+      if (selfIdentity === null) return null;
+      if (pid === process.pid) return selfIdentity;
+      return procfsProcessStart(
+        await readFile(`/proc/${pid}/stat`, 'utf8'),
+        pid,
+      );
     } catch {
       return null;
     }

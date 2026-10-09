@@ -19,6 +19,7 @@ import * as engine from '@redact-secret/core';
 import { CANONICAL_TYPES, POLICY_ID } from '../helper/dist/core.js';
 import {
   pathSnapshotMatches,
+  procfsProcessStart,
   SettingsStore,
   sameFileIdentity,
 } from '../helper/dist/storage.js';
@@ -1025,4 +1026,19 @@ test('macOS lease process starts use a stable UTC identity across parent timezon
     assert.equal(result.status, 0);
     assert.equal(JSON.parse(result.stdout).same, true);
   }
+});
+
+test('procfs ownership parses exact PID/start despite spaces and parentheses in process names', () => {
+  const fields = ['S', ...Array(18).fill('0'), '123456', '0'];
+  const value = `42 (synthetic ) worker (name)) ${fields.join(' ')}`;
+  assert.equal(procfsProcessStart(value, 42), '123456');
+  assert.equal(procfsProcessStart(value, 7), null);
+  assert.equal(procfsProcessStart(value, 0), null);
+  assert.equal(procfsProcessStart(value, 42.5), null);
+  assert.equal(procfsProcessStart('42 synthetic 123456', 42), null);
+  assert.equal(procfsProcessStart('42 (worker) S 0', 42), null);
+  assert.equal(
+    procfsProcessStart(value.replace('123456', 'unknown-start'), 42),
+    null,
+  );
 });

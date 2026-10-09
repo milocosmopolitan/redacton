@@ -9,7 +9,10 @@ Settings saves retain atomic hard-link acquisition, exact document/revision CAS,
 file sync before rename, and nonce revalidation before release or recovery.
 Version 2 leases add platform/host identity and a process-start observation.
 No timestamp or TTL permits removal of a live writer. Linux additionally binds
-ownership to the kernel boot ID and PID namespace. Process starts come from Linux
+ownership to the kernel boot ID and PID namespace. Before using Linux process
+metadata, the helper verifies `/proc/self/stat` reports its own Node PID; a
+host-mounted procfs exposing another PID numbering scheme is unavailable rather
+than evidence for reclaiming a live lease. Process starts come from Linux
 `/proc/<pid>/stat`, macOS `/bin/ps lstart` with fixed UTC timezone, or Windows PowerShell `Get-Process`
 StartTime UTC ticks. macOS has second-level precision; an indistinguishable reused
 PID conservatively stays busy. Probes have fixed timeouts of 500 ms on macOS and
