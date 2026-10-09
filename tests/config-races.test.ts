@@ -357,6 +357,30 @@ test('local panel is not drawn on unsupported surfaces', async ($, on) => {
   }
   expect(drawn).toBe(false);
 });
+test('a prompt sent after Apply is scanned with the applied session rule', async ($, on) => {
+  const fixture = setup(on);
+  on('prompt.submit', (_$, e) => ({ text: e.text }));
+  await $.session.start(start);
+  await $.command.run(localCommand('redact:add-rule'));
+  const ui = await $.ui.mount({ ...pane, surface: 'desktop' });
+  await ui.input({ key: 'rule-id', text: 'my-token-rule', kind: 'change' });
+  await ui.input({ key: 'prefix', text: 'myr_', kind: 'change' });
+  await ui.input({ key: 'length', text: '10', kind: 'change' });
+  for (const key of ['build', 'validate', 'preview', 'apply'])
+    await ui.press({ key });
+  await ui.press({ key: 'cancel' });
+  await $.prompt.submit({
+    text: 'test: SYNTHETIC_AFTER_APPLY',
+    wait: false,
+    origin: { kind: 'composer' },
+  });
+  const scan = fixture.requests
+    .filter((request) => request.operation === 'sanitize')
+    .at(-1);
+  expect(scan?.config?.rules[0]?.id).toBe('my-token-rule');
+  expect(scan?.config?.source).toBe('session');
+  await ui.unmount();
+});
 test('panel removed by the host without ui.close never leaves composer submission blocked', async ($, on) => {
   setup(on);
   let listed = true;
