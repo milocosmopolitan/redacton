@@ -21,7 +21,9 @@ classifier_spec.loader.exec_module(classifier)
 spec = importlib.util.spec_from_file_location('config_terminal', HERE / 'interactive-races.py')
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
-import pyte
+observer_spec = importlib.util.spec_from_file_location('config_terminal_observer', HERE / 'terminal-observer.py')
+observer = importlib.util.module_from_spec(observer_spec)
+observer_spec.loader.exec_module(observer)
 
 TOKEN_A = 'syntheticcred_ABCDEF0123456789'
 TOKEN_B = 'syntheticcred_9876543210ABCDEF'
@@ -41,6 +43,7 @@ def probe(binary, root):
     applied = False
     observations = []
     stdout_sanitizes = 0
+    helper_outcomes = {}
     try:
         companion = folder / 'companion'
         shutil.copytree(HERE / 'config-race-companion', companion)
@@ -104,7 +107,7 @@ def probe(binary, root):
         env = {name: os.environ[name] for name in ['PATH', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT'] if name in os.environ}
         env.update({'HOME': str(folder), 'USERPROFILE': str(folder), 'APPDATA': str(folder / 'appdata'), 'LOCALAPPDATA': str(folder / 'localappdata'), 'TEMP': str(folder), 'TMP': str(folder), 'TERM': 'xterm-256color', 'DISABLE_AUTOUPDATER': '1', 'CLAUDE_CONFIG_DIR': str(config), 'REDACTON_SETTINGS_ROOT': str(folder / 'settings'), 'ANTHROPIC_API_KEY': 'synthetic-local-only', 'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{server.server_port}', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'})
         terminal = driver.Terminal(binary, ['--plugin-dir', str(root), '--plugin-dir', str(companion), '--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--permission-mode', 'dontAsk', '--allowedTools', 'Bash', '--model', 'claude-sonnet-4-6'], str(folder), env)
-        screen = pyte.Screen(140, 40); emulator = pyte.Stream(screen)
+        screen, emulator = observer.make_observer(140, 40, terminal.write)
         decoder = codecs.getincrementaldecoder('utf8')(errors='replace')
         history = ''; trust = False; key = False; tabs = 0; changed_at = time.monotonic()
         def visible(label):
@@ -128,9 +131,7 @@ def probe(binary, root):
             if chunk == b'' or (chunk is None and terminal.poll() is not None): break
             if chunk:
                 text = decoder.decode(chunk); emulator.feed(text); history = (history + text)[-65536:]
-                if '\x1b[6n' in text: terminal.write(f'\x1b[{screen.cursor.y+1};{screen.cursor.x+1}R'.encode())
-                if '\x1b[c' in text: terminal.write(b'\x1b[?1;2c')
-                if '\x1b[>c' in text: terminal.write(b'\x1b[>0;95;0c')
+                helper_outcomes.update(classifier.helper_diagnostics(history))
             view = ' '.join('\n'.join(screen.display).split())
             old_stage = stage
             if stage == 'startup':
@@ -186,6 +187,7 @@ def probe(binary, root):
         first = json.dumps(results.get('config_tool_0')); second = json.dumps(results.get('config_tool_1'))
         executions = (folder / 'executions').stat().st_size if (folder / 'executions').exists() else 0
         outcome = {'stage': stage, 'appliedWhileHeld': held_at_apply and applied, 'executions': executions, 'stdoutSanitizes': stdout_sanitizes, 'modelRequests': len(captures), 'auxiliaryRequests': auxiliary, 'oldConfigurationObserved': len(observations) >= 1, 'newConfigurationObserved': len(observations) == 2 and observations[0] != observations[1], 'firstRawObserved': TOKEN_A in first, 'secondMaskedObserved': TOKEN_B not in second and '<SECRET_1>' in second, 'toolResultCount': len(results), 'toolResultsSuccessful': len(results) == 2 and all(value.get('is_error') is not True for value in results.values()), 'privateEveryRequest': private, 'endpointFailed': failed}
+        diagnostic = {'code': 'CONFIG_HELPER_DIAGNOSTICS', 'helpers': [helper_outcomes[index] for index in (1, 2) if index in helper_outcomes], 'secondToolCode': classifier.second_tool_code(results.get('config_tool_1'))}
     finally:
         try:
             if terminal: terminal.close()
@@ -196,7 +198,7 @@ def probe(binary, root):
     outcome['endpointFailed'] = failed
     outcome['auxiliaryRequests'] = auxiliary
     outcome['status'] = 'passed' if stage == 'complete' and held_at_apply and applied and executions == 2 and stdout_sanitizes == 2 and len(captures) == 4 and len(observations) == 2 and observations[0] != observations[1] and TOKEN_A in first and TOKEN_B not in second and '<SECRET_1>' in second and outcome['toolResultsSuccessful'] and private and not failed else 'blocked' if stage == 'panel' and len(captures) == 1 and not failed else 'failed'
-    return outcome
+    return outcome, diagnostic
 
 
 def main():
@@ -205,9 +207,10 @@ def main():
     if version.returncode or not version.stdout.startswith('2.1.294 '): raise RuntimeError('CONFIG_RACE_HOST_UNAVAILABLE')
     root = pathlib.Path(sys.argv[sys.argv.index('--plugin-root') + 1]).resolve()
     before = hashlib.sha256((root / 'mod/index.tsx').read_bytes()).hexdigest()
-    row = probe(binary, root)
+    row, diagnostic = probe(binary, root)
     if hashlib.sha256((root / 'mod/index.tsx').read_bytes()).hexdigest() != before: raise RuntimeError('CONFIG_RACE_SOURCE_CHANGED')
     pathlib.Path(sys.argv[sys.argv.index('--report') + 1]).write_text(json.dumps({'hostVersion': '2.1.294', 'modSourceSha256': before, 'row': row}))
+    print(json.dumps(diagnostic))
     return 0 if row['status'] == 'passed' else 1
 
 

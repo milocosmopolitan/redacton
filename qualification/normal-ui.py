@@ -121,8 +121,11 @@ def read_terminal():
     return None
 
 decoder = codecs.getincrementaldecoder('utf8')(errors='replace')
-screen = pyte.Screen(columns, 40)
-terminal = pyte.Stream(screen)
+import importlib.util
+observer_spec = importlib.util.spec_from_file_location('redacton_terminal_observer', os.path.join(os.path.dirname(__file__), 'terminal-observer.py'))
+observer_module = importlib.util.module_from_spec(observer_spec)
+observer_spec.loader.exec_module(observer_module)
+screen, terminal = observer_module.make_observer(columns, 40, write_terminal)
 raw = ''
 exit_code = None
 stage = 'startup'
@@ -254,12 +257,6 @@ try:
             chunk = decoder.decode(data)
             raw = (raw + chunk)[-262144:]
             terminal.feed(chunk)
-            if '\x1b[6n' in chunk:
-                write_terminal(f'\x1b[{screen.cursor.y + 1};{screen.cursor.x + 1}R'.encode())
-            if '\x1b[c' in chunk:
-                write_terminal(b'\x1b[?1;2c')
-            if '\x1b[>c' in chunk:
-                write_terminal(b'\x1b[>0;95;0c')
         elif poll() is not None:
             break
         view = ' '.join(displayed().split())

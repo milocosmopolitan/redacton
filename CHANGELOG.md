@@ -9,6 +9,7 @@
 - Made reusable host probes select an explicit pinned Claude binary and record its observed version without an RTK runtime dependency.
 - Registered `/redacton` and `/redactoff` for immediate execution during an active turn, preserving the policy captured by each operation already in flight.
 - Added `/redactconfig` as an immediate alias for the existing local configuration panel, with the same validation, preview, explicit Apply and prompt fallback guards.
+- Fixed Windows Node 22 settings reads to compare consistent volume serial widths while preserving file identity and replacement checks.
 
 ## 0.1.0
 

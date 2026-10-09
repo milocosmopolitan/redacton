@@ -20,7 +20,7 @@ on:
       probe:
         description: Diagnostic host gate only, partial evidence never qualifies a release
         type: choice
-        options: [all, terminal-ui, guarded-errors]
+        options: [all, terminal-ui, guarded-errors, config-races]
         default: all
       attempt_wsl:
         description: Windows Node24 only, explicit real WSL2 installation probe (not release qualification)

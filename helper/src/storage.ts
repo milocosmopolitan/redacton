@@ -48,6 +48,24 @@ function code(error: unknown): string | undefined {
 function fail(message: string): never {
   throw new Error(message);
 }
+type FileIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+export function sameFileIdentity(
+  left: FileIdentity,
+  right: FileIdentity,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (
+    ![left.dev, right.dev, left.ino, right.ino].every(
+      (value) => typeof value === 'bigint' && value >= 0n,
+    )
+  )
+    return false;
+  // Older Windows libuv returns 64-bit path serials and 32-bit handle serials.
+  // Match its corrected 32-bit device identity, retaining the exact file ID.
+  const device = (value: bigint) =>
+    platform === 'win32' ? value & 0xffffffffn : value;
+  return left.ino === right.ino && device(left.dev) === device(right.dev);
+}
 
 // State and rule bodies are written only here, never to logs, arguments or model context.
 export class SettingsStore {
@@ -84,16 +102,14 @@ export class SettingsStore {
         !stat.isFile() ||
         (!allowLinks && stat.nlink !== 1n) ||
         stat.size > BigInt(maxBytes) ||
-        stat.dev !== before.dev ||
-        stat.ino !== before.ino
+        !sameFileIdentity(stat, before)
       )
         fail('SETTINGS_CORRUPT');
       const openedPath = await lstat(path, { bigint: true });
       if (
         !openedPath.isFile() ||
         openedPath.isSymbolicLink() ||
-        openedPath.dev !== stat.dev ||
-        openedPath.ino !== stat.ino
+        !sameFileIdentity(openedPath, stat)
       )
         fail('SETTINGS_CORRUPT');
       const bytes = Buffer.alloc(maxBytes + 1);
@@ -113,8 +129,7 @@ export class SettingsStore {
         size > maxBytes ||
         !after.isFile() ||
         after.isSymbolicLink() ||
-        after.dev !== stat.dev ||
-        after.ino !== stat.ino
+        !sameFileIdentity(after, stat)
       )
         fail('SETTINGS_CORRUPT');
       return new TextDecoder('utf-8', { fatal: true }).decode(

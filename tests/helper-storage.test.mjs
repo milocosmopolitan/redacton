@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import * as engine from '@redact-secret/core';
 import { CANONICAL_TYPES, POLICY_ID } from '../helper/dist/core.js';
-import { SettingsStore } from '../helper/dist/storage.js';
+import { SettingsStore, sameFileIdentity } from '../helper/dist/storage.js';
 
 await engine.initialize();
 const empty = { schemaVersion: 1, rules: [] };
@@ -55,6 +55,33 @@ const save = (
   root,
   approved = true,
 ) => store.save(scope, root, approved, expected, doc, engine, CANONICAL_TYPES);
+
+test('Windows volume serial width differences retain exact device and file identity', () => {
+  const path = { dev: 0x12345678abcdef01n, ino: 12345n };
+  const handle = { dev: 0xabcdef01n, ino: 12345n };
+  assert.equal(sameFileIdentity(path, handle, 'win32'), true);
+  assert.equal(sameFileIdentity(handle, path, 'win32'), true);
+  assert.equal(sameFileIdentity(path, handle, 'linux'), false);
+  assert.equal(sameFileIdentity(path, handle, 'darwin'), false);
+  assert.equal(
+    sameFileIdentity(path, { ...handle, dev: 0xabcdef02n }, 'win32'),
+    false,
+  );
+  assert.equal(
+    sameFileIdentity(path, { ...handle, ino: 12346n }, 'win32'),
+    false,
+  );
+  for (const invalid of [0xabcdef01, '2882400001', -1n]) {
+    assert.equal(
+      sameFileIdentity({ ...handle, dev: invalid }, handle, 'win32'),
+      false,
+    );
+    assert.equal(
+      sameFileIdentity(handle, { ...handle, ino: invalid }, 'win32'),
+      false,
+    );
+  }
+});
 
 test('absent scope identities are stable/private and unapproved project reads never write repository files', async () =>
   fixture(async (root, store) => {

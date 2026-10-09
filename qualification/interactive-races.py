@@ -243,8 +243,10 @@ def run_direction(binary, root, direction):
         terminal = Terminal(binary, ['--plugin-dir', root, '--plugin-dir', companion, '--setting-sources', '',
                                      '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--permission-mode', 'dontAsk',
                                      '--allowedTools', 'Bash', '--model', 'claude-sonnet-4-6'], folder, env)
-        screen = pyte.Screen(140, 40)
-        emulator = pyte.Stream(screen)
+        observer_spec = importlib.util.spec_from_file_location('race_terminal_observer', os.path.join(HERE, 'terminal-observer.py'))
+        observer_module = importlib.util.module_from_spec(observer_spec)
+        observer_spec.loader.exec_module(observer_module)
+        screen, emulator = observer_module.make_observer(140, 40, terminal.write)
         decoder = codecs.getincrementaldecoder('utf8')(errors='replace')
         deadline = time.monotonic() + 20
         toggle_deadline = None
@@ -274,12 +276,6 @@ def run_direction(binary, root, direction):
                 text = decoder.decode(chunk)
                 emulator.feed(text)
                 receipt_buffer = (receipt_buffer + text)[-65536:]
-                if '\x1b[6n' in text:
-                    terminal.write(f'\x1b[{screen.cursor.y+1};{screen.cursor.x+1}R'.encode())
-                if '\x1b[c' in text:
-                    terminal.write(b'\x1b[?1;2c')
-                if '\x1b[>c' in text:
-                    terminal.write(b'\x1b[>0;95;0c')
             view = ' '.join('\n'.join(screen.display).split())
             if phase == 'startup':
                 if not trust_answered and any(question in view for question in ['Do you trust the files in this folder?', 'Is this a project you created or one you trust?']):
