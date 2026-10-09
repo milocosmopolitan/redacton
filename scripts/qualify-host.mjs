@@ -27,7 +27,9 @@ const probeArgument = process.argv.find((argument) =>
 );
 const onlyProbe = probeArgument?.slice('--probe='.length) ?? 'all';
 if (
-  !['all', 'terminal-ui', 'guarded-errors'].includes(onlyProbe) ||
+  !['all', 'terminal-ui', 'guarded-errors', 'config-races'].includes(
+    onlyProbe,
+  ) ||
   (packageOnly && onlyProbe !== 'all')
 )
   throw new Error('PROBE_SELECTION_INVALID');

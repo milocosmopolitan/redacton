@@ -43,7 +43,7 @@ try {
     ]) {
       const execution = run(
         [resolve(`qualification/${file}`)],
-        process.env,
+        { ...process.env, REDACTON_PYTE_PATH: dependencies },
         true,
       );
       const passed = execution.status === 0 && !execution.error;

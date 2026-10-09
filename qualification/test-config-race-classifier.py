@@ -21,6 +21,17 @@ class ClassifierTest(unittest.TestCase):
         self.assertEqual(classifier.request_stage([{'type': 'tool_result', 'tool_use_id': 'config_tool_0'}]), 1)
         self.assertEqual(classifier.request_stage([{'type': 'text', 'text': 'Unrelated auxiliary'}]), -1)
 
+    def test_bounded_helper_receipts_and_error_codes(self):
+        values = classifier.helper_diagnostics('CONFIG_HELPER_2_PROCESS_REJECTED_N_3_0_0_0_0')
+        self.assertEqual(values[2]['ordinal'], 2)
+        self.assertEqual(values[2]['exitCode'], None)
+        self.assertEqual(values[2]['elapsedBucket'], 3)
+        self.assertEqual(classifier.helper_diagnostics('CONFIG_HELPER_1_PRIVATE_0_0_0_0_0_0'), {})
+        self.assertEqual(classifier.helper_diagnostics('CONFIG_HELPER_1_DECLARED_OK_2147483648_0_0_0_0_1'), {})
+        self.assertEqual(classifier.second_tool_code({'is_error': True, 'content': [{'text': 'Tool withheld: REDACTON_WITHHELD'}]}), 'REDACTON_WITHHELD')
+        self.assertEqual(classifier.second_tool_code({'is_error': True, 'content': 'private unknown'}), 'UNKNOWN')
+        self.assertEqual(classifier.second_tool_code({'is_error': False, 'content': 'masked'}), 'SUCCESS')
+
 
 if __name__ == '__main__':
     unittest.main()

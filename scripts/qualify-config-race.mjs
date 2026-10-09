@@ -2,7 +2,10 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { validateConfigRaceReport } from './config-race-evidence.mjs';
+import {
+  configRaceDiagnostics,
+  validateConfigRaceReport,
+} from './config-race-evidence.mjs';
 import { withPythonDependencies } from './python-probe.mjs';
 import { windowsPtyDiagnostics } from './terminal-ui-evidence.mjs';
 
@@ -38,6 +41,9 @@ try {
     );
     for (const diagnostic of windowsPtyDiagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(diagnostic));
+    for (const diagnostic of configRaceDiagnostics(result.stdout ?? ''))
+      if (diagnostic.code === 'CONFIG_HELPER_DIAGNOSTICS')
+        console.log(JSON.stringify(diagnostic));
     if (result.error || (await stat(report)).size > 4096)
       throw new Error('CONFIG_RACE_REPORT_INVALID');
     if (

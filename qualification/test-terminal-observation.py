@@ -11,6 +11,9 @@ import types
 import unittest
 from unittest.mock import patch
 import runpy
+import sys
+if os.environ.get("REDACTON_PYTE_PATH"):
+    sys.path.insert(0, os.environ["REDACTON_PYTE_PATH"])
 
 source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text(encoding='utf8'))
 functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'startup_dialog', 'prepare_ui_companion']]
@@ -75,6 +78,40 @@ class TerminalObservationTest(unittest.TestCase):
         self.assertTrue(scope['focused']('Create draft'))
         self.assertTrue(scope['visible_words']('TURN_ON_TO_VALIDATE', 'TURN_ON_TO_VAL │ IDATE'))
         self.assertFalse(scope['visible_words']('TURN_ON_TO_VALIDATE', 'TURN_ON_TO_SAVE'))
+
+class TerminalQueryTest(unittest.TestCase):
+    def observer(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('terminal_observer_test', pathlib.Path(__file__).with_name('terminal-observer.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        replies = []
+        screen, stream = module.make_observer(140, 40, replies.append)
+        return screen, stream, replies
+
+    def test_combined_query_uses_cursor_at_query_not_end_of_read(self):
+        screen, stream, replies = self.observer()
+        stream.feed('\x1b[4;7H\x1b[6n\x1b[20;33H')
+        self.assertEqual(replies, [b'\x1b[4;7R'])
+        self.assertEqual((screen.cursor.y, screen.cursor.x), (19, 32))
+        self.assertNotEqual(replies[0], f'\x1b[{screen.cursor.y+1};{screen.cursor.x+1}R'.encode())
+
+    def test_each_query_in_one_read_gets_its_own_cursor_reply(self):
+        screen, stream, replies = self.observer()
+        stream.feed('\x1b[2;3H\x1b[6n\x1b[9;11H\x1b[6n')
+        self.assertEqual(replies, [b'\x1b[2;3R', b'\x1b[9;11R'])
+
+    def test_split_queries_and_distinct_primary_secondary_attributes(self):
+        for cut in range(1, 5):
+            screen, stream, replies = self.observer()
+            stream.feed('\x1b[8;12H')
+            query = '\x1b[6n'
+            stream.feed(query[:cut]); stream.feed(query[cut:])
+            self.assertEqual(replies, [b'\x1b[8;12R'])
+        screen, stream, replies = self.observer()
+        for char in '\x1b[c\x1b[>c\x1b[0c\x1b[>0c\x1b[5n':
+            stream.feed(char)
+        self.assertEqual(replies, [b'\x1b[?1;2c', b'\x1b[>0;95;0c', b'\x1b[?1;2c', b'\x1b[>0;95;0c', b'\x1b[0n'])
 
 if __name__ == '__main__':
     unittest.main()

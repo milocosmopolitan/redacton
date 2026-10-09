@@ -168,7 +168,10 @@ process.stdout.write(JSON.stringify(response));
                     'ANTHROPIC_BASE_URL':f'http://127.0.0.1:{server.server_port}','CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC':'1'})
         terminal = driver.Terminal(binary,['--plugin-dir',str(plugin),'--setting-sources','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}',
                                    '--permission-mode','dontAsk','--allowedTools','Bash','--model','claude-sonnet-4-6'],str(folder),env)
-        screen = pyte.Screen(140,40);stream = pyte.Stream(screen)
+        observer_spec = importlib.util.spec_from_file_location('cancellation_observer', HERE / 'terminal-observer.py')
+        observer_module = importlib.util.module_from_spec(observer_spec)
+        observer_spec.loader.exec_module(observer_module)
+        screen, stream = observer_module.make_observer(140, 40, terminal.write)
         decoder = codecs.getincrementaldecoder('utf8')(errors='replace')
         history = ''
         deadline = time.monotonic()+45
@@ -178,9 +181,6 @@ process.stdout.write(JSON.stringify(response));
                 break
             if chunk:
                 text = decoder.decode(chunk);stream.feed(text);history=(history+text)[-65536:]
-                if '\x1b[6n' in text:terminal.write(f'\x1b[{screen.cursor.y+1};{screen.cursor.x+1}R'.encode())
-                if '\x1b[c' in text:terminal.write(b'\x1b[?1;2c')
-                if '\x1b[>c' in text:terminal.write(b'\x1b[>0;95;0c')
             view = ' '.join('\n'.join(screen.display).split())
             if phase == 'startup' and not trust_answered and any(question in view for question in ['Do you trust the files in this folder?', 'Is this a project you created or one you trust?']):
                 time.sleep(1);terminal.write(b'\x1b[B');time.sleep(.2);terminal.write(b'\r');trust_answered=True

@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { type BigIntStats, constants } from 'node:fs';
 import {
   link,
   lstat,
@@ -48,6 +48,68 @@ function code(error: unknown): string | undefined {
 function fail(message: string): never {
   throw new Error(message);
 }
+type FileIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+export function sameFileIdentity(
+  left: FileIdentity,
+  right: FileIdentity,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (
+    ![left.dev, right.dev, left.ino, right.ino].every(
+      (value) =>
+        typeof value === 'bigint' && value >= -(1n << 63n) && value < 1n << 63n,
+    )
+  )
+    return false;
+  // Older Windows libuv returns 64-bit path serials and 32-bit handle serials.
+  // Node exposes both IDs through signed BigInt64Array, including negative IDs.
+  // Match corrected Windows device width, retaining the exact signed file ID.
+  const device = (value: bigint) =>
+    platform === 'win32' ? value & 0xffffffffn : value;
+  return left.ino === right.ino && device(left.dev) === device(right.dev);
+}
+
+export async function pathSnapshotMatches(
+  path: string,
+  snapshot: BigIntStats,
+  original: BigIntStats,
+  maxBytes = MAX_BYTES,
+  allowLinks = false,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  const regular = (value: BigIntStats) =>
+    value.isFile() &&
+    !value.isSymbolicLink() &&
+    (allowLinks || value.nlink === 1n) &&
+    value.size <= BigInt(maxBytes);
+  if (!regular(snapshot) || !regular(original)) return false;
+  if (platform !== 'win32' || snapshot.dev !== 0n)
+    return sameFileIdentity(snapshot, original, platform);
+  // Windows path stats can omit the volume ID. Never treat zero as a wildcard:
+  // independently reopen the path and compare two descriptor volume/file IDs.
+  if (
+    snapshot.ino !== original.ino ||
+    !sameFileIdentity(snapshot, snapshot, platform) ||
+    !sameFileIdentity(original, original, platform)
+  )
+    return false;
+  const second = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const secondStat = await second.stat({ bigint: true });
+    if (
+      !regular(secondStat) ||
+      !sameFileIdentity(secondStat, original, platform)
+    )
+      return false;
+    const checked = await lstat(path, { bigint: true });
+    return regular(checked) && sameFileIdentity(checked, snapshot, platform);
+  } finally {
+    await second.close();
+  }
+}
 
 // State and rule bodies are written only here, never to logs, arguments or model context.
 export class SettingsStore {
@@ -84,16 +146,20 @@ export class SettingsStore {
         !stat.isFile() ||
         (!allowLinks && stat.nlink !== 1n) ||
         stat.size > BigInt(maxBytes) ||
-        stat.dev !== before.dev ||
-        stat.ino !== before.ino
+        !(await pathSnapshotMatches(path, before, stat, maxBytes, allowLinks))
       )
         fail('SETTINGS_CORRUPT');
       const openedPath = await lstat(path, { bigint: true });
       if (
         !openedPath.isFile() ||
         openedPath.isSymbolicLink() ||
-        openedPath.dev !== stat.dev ||
-        openedPath.ino !== stat.ino
+        !(await pathSnapshotMatches(
+          path,
+          openedPath,
+          stat,
+          maxBytes,
+          allowLinks,
+        ))
       )
         fail('SETTINGS_CORRUPT');
       const bytes = Buffer.alloc(maxBytes + 1);
@@ -113,8 +179,7 @@ export class SettingsStore {
         size > maxBytes ||
         !after.isFile() ||
         after.isSymbolicLink() ||
-        after.dev !== stat.dev ||
-        after.ino !== stat.ino
+        !(await pathSnapshotMatches(path, after, stat, maxBytes, allowLinks))
       )
         fail('SETTINGS_CORRUPT');
       return new TextDecoder('utf-8', { fatal: true }).decode(

@@ -104,6 +104,8 @@ jobs:
       - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
       - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - if: runner.os == 'Windows'
+        run: npm run check:pure
       - run: npm run build
       - id: artifact
         run: node scripts/verify-artifact.mjs --native

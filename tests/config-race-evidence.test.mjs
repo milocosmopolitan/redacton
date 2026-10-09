@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  helperOutcome,
+  register,
+} from '../qualification/config-race-companion/hooks/register.js';
+import {
+  configHelperDiagnostic,
   configRaceDiagnostics,
   configRaceRow,
   validateConfigRaceReport,
@@ -76,4 +81,152 @@ test('failed observations stay finite and reject extra or arbitrary fields', () 
     ),
     [],
   );
+});
+
+test('helper outcomes classify only real delegated reply fields and preserve failures', async () => {
+  const request = {
+    protocolVersion: 2,
+    operation: 'sanitize',
+    requestId: 'synthetic-request',
+    policyId: 'credentials-alpha1',
+    config: { revision: 'cfg-1-1', rules: [] },
+    segments: [{ id: 'stdout' }],
+  };
+  const reply = {
+    protocolVersion: 2,
+    requestId: request.requestId,
+    policyId: request.policyId,
+    configRevision: request.config.revision,
+    engineVersion: '0.1.0-beta.14',
+    status: 'ok',
+  };
+  const result = {
+    value: {
+      exitCode: 0,
+      stdout: JSON.stringify(reply),
+      stderr: '',
+      isStdoutTruncated: false,
+      isStderrTruncated: false,
+    },
+  };
+  assert.equal(helperOutcome(result, request, 2000).outcome, 'DECLARED_OK');
+  assert.equal(helperOutcome(result, request, 2000).elapsedBucket, 3);
+  const missingIdentity = helperOutcome(
+    {
+      value: {
+        ...result.value,
+        stdout: JSON.stringify({
+          status: 'ok',
+          engineVersion: '0.1.0-beta.14',
+        }),
+      },
+    },
+    {},
+    1,
+  );
+  assert.equal(missingIdentity.identityMatched, false);
+  assert.equal(missingIdentity.outcome, 'IDENTITY_MISMATCH');
+  assert.equal(
+    helperOutcome({ value: { ...result.value, stdout: '{' } }, request, 1)
+      .outcome,
+    'INVALID_JSON',
+  );
+  assert.equal(
+    helperOutcome(
+      { value: { ...result.value, stderr: 'private marker' } },
+      request,
+      1,
+    ).outcome,
+    'STDERR_PRESENT',
+  );
+  assert.equal(
+    helperOutcome(
+      {
+        value: {
+          ...result.value,
+          stdout: JSON.stringify({
+            ...reply,
+            status: 'failed',
+            errorCode: 'TIMEOUT',
+          }),
+        },
+      },
+      request,
+      1,
+    ).outcome,
+    'DECLARED_TIMEOUT',
+  );
+  const handlers = {};
+  register((event, ...args) => {
+    handlers[event] = args.at(-1);
+  });
+  const event = { init: { stdin: JSON.stringify(request) } };
+  let delegated = 0;
+  assert.equal(
+    await handlers['process.run'](null, event, async (observed) => {
+      assert.equal(observed, event);
+      delegated++;
+      return result;
+    }),
+    result,
+  );
+  const failure = Error('private exception marker');
+  await assert.rejects(
+    handlers['process.run'](null, event, async () => {
+      delegated++;
+      throw failure;
+    }),
+    (error) => error === failure,
+  );
+  assert.equal(delegated, 2);
+  const receipt = handlers['command.run']().text;
+  assert.match(receipt, /CONFIG_HELPER_1_DECLARED_OK_0_/);
+  assert.match(receipt, /CONFIG_HELPER_2_PROCESS_REJECTED_N_/);
+  assert.doesNotMatch(receipt, /private|marker/);
+});
+
+test('strict helper diagnostics reject raw fields, fabricated enums and oversized values', () => {
+  const value = {
+    code: 'CONFIG_HELPER_DIAGNOSTICS',
+    helpers: [
+      {
+        ordinal: 2,
+        outcome: 'PROCESS_REJECTED',
+        exitCode: null,
+        elapsedBucket: 3,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stderrPresent: false,
+        identityMatched: false,
+      },
+    ],
+    secondToolCode: 'REDACTON_WITHHELD',
+  };
+  assert.equal(configHelperDiagnostic(value), value);
+  assert.deepEqual(configRaceDiagnostics(JSON.stringify(value)), [value]);
+  for (const mutate of [
+    (v) => {
+      v.helpers[0].stdout = 'private';
+    },
+    (v) => {
+      v.helpers[0].outcome = 'private';
+    },
+    (v) => {
+      v.helpers[0].elapsedBucket = 5000;
+    },
+    (v) => {
+      v.helpers[0].exitCode = 2147483648;
+    },
+    (v) => {
+      v.helpers.push({ ...v.helpers[0] });
+    },
+    (v) => {
+      v.secondToolCode = 'private';
+    },
+  ]) {
+    const invalid = structuredClone(value);
+    mutate(invalid);
+    assert.equal(configHelperDiagnostic(invalid), null);
+    assert.deepEqual(configRaceDiagnostics(JSON.stringify(invalid)), []);
+  }
 });

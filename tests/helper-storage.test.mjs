@@ -17,7 +17,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 import * as engine from '@redact-secret/core';
 import { CANONICAL_TYPES, POLICY_ID } from '../helper/dist/core.js';
-import { SettingsStore } from '../helper/dist/storage.js';
+import {
+  pathSnapshotMatches,
+  SettingsStore,
+  sameFileIdentity,
+} from '../helper/dist/storage.js';
 
 await engine.initialize();
 const empty = { schemaVersion: 1, rules: [] };
@@ -55,6 +59,239 @@ const save = (
   root,
   approved = true,
 ) => store.save(scope, root, approved, expected, doc, engine, CANONICAL_TYPES);
+
+test('Windows volume serial width differences retain exact device and file identity', () => {
+  const path = { dev: 0x12345678abcdef01n, ino: 12345n };
+  const handle = { dev: 0xabcdef01n, ino: 12345n };
+  assert.equal(sameFileIdentity(path, handle, 'win32'), true);
+  assert.equal(sameFileIdentity(handle, path, 'win32'), true);
+  assert.equal(sameFileIdentity(path, handle, 'linux'), false);
+  assert.equal(sameFileIdentity(path, handle, 'darwin'), false);
+  assert.equal(
+    sameFileIdentity(path, { ...handle, dev: 0xabcdef02n }, 'win32'),
+    false,
+  );
+  assert.equal(
+    sameFileIdentity(path, { ...handle, ino: 12346n }, 'win32'),
+    false,
+  );
+  const signedPath = {
+    dev: BigInt.asIntN(64, 0xfedcba98abcdef01n),
+    ino: -12345n,
+  };
+  const signedHandle = { dev: 0xabcdef01n, ino: -12345n };
+  assert.equal(sameFileIdentity(signedPath, signedHandle, 'win32'), true);
+  assert.equal(sameFileIdentity(signedHandle, signedPath, 'win32'), true);
+  assert.equal(sameFileIdentity(signedPath, signedPath, 'linux'), true);
+  assert.equal(
+    sameFileIdentity(signedPath, { ...signedHandle, ino: -12346n }, 'win32'),
+    false,
+  );
+  for (const invalid of [
+    0xabcdef01,
+    '2882400001',
+    1n << 63n,
+    -(1n << 63n) - 1n,
+  ]) {
+    assert.equal(
+      sameFileIdentity({ ...handle, dev: invalid }, handle, 'win32'),
+      false,
+    );
+    assert.equal(
+      sameFileIdentity(handle, { ...handle, ino: invalid }, 'win32'),
+      false,
+    );
+  }
+});
+
+test('owned regular-file lstat and fstat identities agree without exposing filesystem IDs', async () =>
+  fixture(async (root) => {
+    const path = join(root, 'identity-probe');
+    await writeFile(path, 'x');
+    const before = await fs.lstat(path, { bigint: true });
+    const handle = await fs.open(path, constants.O_RDONLY);
+    try {
+      const opened = await handle.stat({ bigint: true });
+      const after = await fs.lstat(path, { bigint: true });
+      const checks = {
+        regular: [before, opened, after].every((value) => value.isFile()),
+        noSymlinks: !before.isSymbolicLink() && !after.isSymbolicLink(),
+        singleLink: [before, opened, after].every(
+          (value) => value.nlink === 1n,
+        ),
+        boundedSize: [before, opened, after].every(
+          (value) => value.size === 1n,
+        ),
+        inodeEqual: before.ino === opened.ino && after.ino === opened.ino,
+        beforeIdentity: await pathSnapshotMatches(path, before, opened),
+        afterIdentity: await pathSnapshotMatches(path, after, opened),
+      };
+      const sign = (value) =>
+        value < 0n ? 'negative' : value === 0n ? 'zero' : 'positive';
+      assert.equal(
+        Object.values(checks).every(Boolean),
+        true,
+        JSON.stringify({
+          code: 'STORAGE_IDENTITY_PROBE',
+          ...checks,
+          normalizedDeviceEqual:
+            (before.dev & 0xffffffffn) === (opened.dev & 0xffffffffn) &&
+            (after.dev & 0xffffffffn) === (opened.dev & 0xffffffffn),
+          beforeDeviceSign: sign(before.dev),
+          openedDeviceSign: sign(opened.dev),
+          afterDeviceSign: sign(after.dev),
+          beforeInodeSign: sign(before.ino),
+          openedInodeSign: sign(opened.ino),
+          afterInodeSign: sign(after.ino),
+        }),
+      );
+    } finally {
+      await handle.close();
+    }
+  }));
+
+const statWith = (value, changes) =>
+  Object.assign(Object.create(Object.getPrototypeOf(value)), value, changes);
+
+test('zero Windows path device IDs require matching second descriptor identities and close every descriptor', async () =>
+  fixture(async (root) => {
+    const path = join(root, 'descriptor-probe');
+    await writeFile(path, 'x');
+    const original = await fs.open(path, constants.O_RDONLY);
+    const originalStat = await original.stat({ bigint: true });
+    const snapshot = statWith(await fs.lstat(path, { bigint: true }), {
+      dev: 0n,
+    });
+    const savedOpen = fs.open;
+    const savedLstat = fs.lstat;
+    let device = originalStat.dev;
+    let inode = originalStat.ino;
+    let opens = 0;
+    let closes = 0;
+    fs.lstat = async (...args) =>
+      statWith(await savedLstat(...args), { dev: 0n });
+    fs.open = async (...args) => {
+      const handle = await savedOpen(...args);
+      opens += 1;
+      const savedStat = handle.stat.bind(handle);
+      const savedClose = handle.close.bind(handle);
+      handle.stat = async (...options) =>
+        statWith(await savedStat(...options), { dev: device, ino: inode });
+      handle.close = async () => {
+        closes += 1;
+        await savedClose();
+      };
+      return handle;
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        true,
+      );
+      device ^= 1n;
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        false,
+      );
+      device = originalStat.dev;
+      inode = originalStat.ino + 1n;
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        false,
+      );
+      inode = originalStat.ino;
+      device = 0n;
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          statWith(originalStat, { dev: 0n }),
+          65536,
+          false,
+          'win32',
+        ),
+        true,
+      );
+      assert.equal(opens, 4);
+      assert.equal(closes, opens);
+    } finally {
+      fs.open = savedOpen;
+      fs.lstat = savedLstat;
+      syncBuiltinESMExports();
+      await original.close();
+    }
+  }));
+
+test('zero-device verification rejects replacement after the second descriptor opens and closes it', async () =>
+  fixture(async (root) => {
+    const path = join(root, 'descriptor-probe');
+    const replacement = join(root, 'replacement');
+    await writeFile(path, 'x');
+    await writeFile(replacement, 'y');
+    const original = await fs.open(path, constants.O_RDONLY);
+    const originalStat = await original.stat({ bigint: true });
+    const snapshot = statWith(await fs.lstat(path, { bigint: true }), {
+      dev: 0n,
+    });
+    const savedOpen = fs.open;
+    const savedLstat = fs.lstat;
+    let closed = false;
+    fs.lstat = async (...args) =>
+      statWith(await savedLstat(...args), { dev: 0n });
+    fs.open = async (...args) => {
+      const second = await savedOpen(...args);
+      const savedClose = second.close.bind(second);
+      second.close = async () => {
+        closed = true;
+        await savedClose();
+      };
+      await fs.rename(path, join(root, 'retired'));
+      await fs.rename(replacement, path);
+      return second;
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        false,
+      );
+      assert.equal(closed, true);
+    } finally {
+      fs.open = savedOpen;
+      fs.lstat = savedLstat;
+      syncBuiltinESMExports();
+      await original.close();
+    }
+  }));
 
 test('absent scope identities are stable/private and unapproved project reads never write repository files', async () =>
   fixture(async (root, store) => {
@@ -541,10 +778,14 @@ test('replacing a checked settings file with a link is rejected even without nof
     await save(store, initial);
     const target = await fs.realpath(join(root, 'personal/settings.json'));
     const moved = join(root, 'moved.json');
+    const snapshot = await fs.lstat(target, { bigint: true });
+    const expectedOpens =
+      process.platform === 'win32' && snapshot.dev === 0n ? 2 : 1;
     const originalOpen = fs.open;
     let swapped = false;
     let reads = 0;
     let opened = 0;
+    let closed = 0;
     fs.open = async (path, ...args) => {
       if (path === target && !swapped) {
         swapped = true;
@@ -557,9 +798,14 @@ test('replacing a checked settings file with a link is rejected even without nof
       if (path === target) {
         opened++;
         const read = handle.read.bind(handle);
+        const close = handle.close.bind(handle);
         handle.read = (...readArgs) => {
           reads++;
           return read(...readArgs);
+        };
+        handle.close = async () => {
+          await close();
+          closed++;
         };
       }
       return handle;
@@ -568,8 +814,10 @@ test('replacing a checked settings file with a link is rejected even without nof
     try {
       await assert.rejects(load(store), { message: 'SETTINGS_CORRUPT' });
       assert.equal(swapped, true);
-      assert.equal(opened, 1);
       assert.equal(reads, 0);
+      assert.equal(closed, opened);
+      // Zero-device Windows snapshots add one metadata-only verification open.
+      assert.equal(opened, expectedOpens);
     } finally {
       fs.open = originalOpen;
       syncBuiltinESMExports();
