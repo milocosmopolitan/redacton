@@ -63,6 +63,7 @@ export const LIMITS = Object.freeze({
   findings: 1000,
   outputBytes: 2097152,
   timeoutMs: 2000,
+  settingsTimeoutMs: 5000,
   pending: 4,
 });
 export const POLICY_ID = 'credentials-alpha1';

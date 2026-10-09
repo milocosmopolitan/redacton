@@ -210,7 +210,7 @@ async function runSettings(
       ['node', `${$.plugin.root}/helper/dist/index.js`],
       {
         stdin: payload,
-        timeoutMs: LIMITS.timeoutMs,
+        timeoutMs: LIMITS.settingsTimeoutMs,
         env: { NODE_OPTIONS: '', NODE_PATH: '' },
       },
     );
@@ -238,7 +238,7 @@ async function runTransfer(
       ['node', `${$.plugin.root}/helper/dist/index.js`],
       {
         stdin: payload,
-        timeoutMs: LIMITS.timeoutMs,
+        timeoutMs: LIMITS.settingsTimeoutMs,
         env: { NODE_OPTIONS: '', NODE_PATH: '' },
       },
     );
