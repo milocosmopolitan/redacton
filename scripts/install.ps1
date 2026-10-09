@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 $staging = $null
 $previous = $null
 $current = $null
+$stage = 'PREREQUISITES'
 try {
     if ($env:OS -ne 'Windows_NT' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64') { throw 'Use native Windows x64 PowerShell. WSL uses install.sh in its Linux filesystem.' }
     if ($ReleaseVersion -eq '0.1.0') { throw 'Historical release is not a Windows artifact. Supply a new reviewed candidate release.' }
@@ -17,6 +18,7 @@ try {
     $null = Get-Command claude
     $v = [version](& $node -p 'process.versions.node')
     if ($LASTEXITCODE -ne 0 -or !(($v.Major -eq 22 -and $v -ge [version]'22.16.0') -or ($v.Major -eq 24 -and $v -ge [version]'24.21.0'))) { throw 'Use Node 22.16.0+ (22.x) or 24.21.0+ (24.x).' }
+    $stage = 'INSTALL_DIRECTORY'
     if (![IO.Path]::IsPathRooted($InstallDirectory)) { throw 'Use an absolute dedicated directory.' }
     $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
     if ($InstallDirectory -eq [IO.Path]::GetPathRoot($InstallDirectory).TrimEnd('\') -or $InstallDirectory -eq $env:USERPROFILE) { throw 'Use a dedicated directory.' }
@@ -25,12 +27,15 @@ try {
     $staging = Join-Path $InstallDirectory ('.install-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $staging | Out-Null
     $archive = Join-Path $staging 'plugin.zip'
+    $stage = 'DOWNLOAD'
     if ($ArchivePath) { Copy-Item -LiteralPath $ArchivePath -Destination $archive }
     else {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri "https://github.com/milocosmopolitan/redacton/releases/download/v$ReleaseVersion/redacton-$ReleaseVersion.zip" -OutFile $archive -UseBasicParsing -TimeoutSec 90
     }
+    $stage = 'ARCHIVE_CHECKSUM'
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ArchiveSha256) { throw 'Archive checksum mismatch.' }
+    $stage = 'ARCHIVE_INSPECTION'
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($archive)
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -45,6 +50,7 @@ try {
             if ($kind -ne 0 -and $kind -ne 32768 -and $kind -ne 16384) { throw 'Archive link or special file.' }
             if ([IO.Path]::GetFullPath((Join-Path $staging $name)).Length -gt 240) { throw 'Choose a shorter install directory.' }
         }
+        $stage = 'EXTRACTION'
         foreach ($entry in $zip.Entries) {
             $destination = Join-Path $staging $entry.FullName
             if ($entry.FullName.EndsWith('/')) { New-Item -ItemType Directory -Path $destination -Force | Out-Null }
@@ -54,6 +60,7 @@ try {
             }
         }
     } finally { $zip.Dispose() }
+    $stage = 'INTERNAL_CHECKSUMS'
     $root = Join-Path $staging "redacton-$ReleaseVersion"
     $listed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($line in Get-Content -LiteralPath (Join-Path $root 'SHA256SUMS') -Encoding UTF8) {
@@ -79,8 +86,10 @@ try {
  if(p.status!=='ok'||p.requestId!=='install_check'||p.engineVersion!=='0.1.0-beta.14'||p.artifact!=='wasm')throw Error();
 }catch{process.exit(1)}
 '@
+    $stage = 'SELF_CHECK'
     & $node -e $probe $root
     if ($LASTEXITCODE -ne 0) { throw 'Readiness self-check failed.' }
+    $stage = 'ACTIVATION'
     $current = Join-Path $InstallDirectory 'current'
     if (Test-Path -LiteralPath $current) {
         $previous = Join-Path $InstallDirectory ('.previous-' + [guid]::NewGuid().ToString('N'))
@@ -91,7 +100,8 @@ try {
     Write-Output 'Candidate installed. PowerShell tool output is outside Redacton Bash interception coverage.'
     Write-Output ("claude --plugin-dir '" + $current.Replace("'", "''") + "'")
 } catch {
-    Write-Error 'Installation failed. Check Node/Claude prerequisites, reviewed digest and a writable short path. Existing installation preserved.' -ErrorAction Continue
+    # Emit only a finite stage and fixed guidance, never exception text or paths.
+    [Console]::Error.WriteLine("Redacton: INSTALL_$stage failed. Check Node/Claude prerequisites, reviewed archive digest and a writable short path. Existing installation preserved.")
     exit 1
 } finally {
     if ($previous -and !(Test-Path -LiteralPath $current)) { Move-Item -LiteralPath $previous -Destination $current }

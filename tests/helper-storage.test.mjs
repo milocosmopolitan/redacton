@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { constants } from 'node:fs';
 import fs, {
   mkdir,
   mkdtemp,
@@ -519,6 +520,7 @@ test('replacing a checked settings file with a link is rejected even without nof
     const originalOpen = fs.open;
     let swapped = false;
     let reads = 0;
+    let opened = 0;
     fs.open = async (path, ...args) => {
       if (path === target && !swapped) {
         swapped = true;
@@ -529,6 +531,7 @@ test('replacing a checked settings file with a link is rejected even without nof
         args[0] &= ~(constants.O_NOFOLLOW ?? 0);
       const handle = await originalOpen(path, ...args);
       if (path === target) {
+        opened++;
         const read = handle.read.bind(handle);
         handle.read = (...readArgs) => {
           reads++;
@@ -541,6 +544,7 @@ test('replacing a checked settings file with a link is rejected even without nof
     try {
       await assert.rejects(load(store), { message: 'SETTINGS_CORRUPT' });
       assert.equal(swapped, true);
+      assert.equal(opened, 1);
       assert.equal(reads, 0);
     } finally {
       fs.open = originalOpen;

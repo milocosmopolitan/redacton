@@ -49,7 +49,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-22.16.0-${{ hashFiles('package-lock.json') }}
+      - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
       - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build && node scripts/verify-artifact.mjs
@@ -80,7 +84,11 @@ jobs:
         if: inputs.target == 'all' || inputs.target == matrix.target
         with:
           node-version: ${{ inputs.node }}
-          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-${{ inputs.node }}-${{ hashFiles('package-lock.json') }}
+      - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
       - if: inputs.target == 'all' || inputs.target == matrix.target
         env:
           EXPECTED: ${{ matrix.arch }}

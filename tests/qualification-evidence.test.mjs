@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -50,7 +50,7 @@ test('qualification rejects stale, emulated, unpinned, or arbitrary-content evid
   delete missing.gates.bash;
   assert.throws(() => validateEvidence(missing, sha), /EVIDENCE_INVALID/);
 });
-test('release gate requires all exact-commit rows and the actual qualified archive', async () => {
+test('release gate requires all 14 exact-commit rows and the actual qualified archive', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'redacton-gate-'));
   const run = (...args) =>
     spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
@@ -73,6 +73,11 @@ test('release gate requires all exact-commit rows and the actual qualified archi
     const sourceSha = run('rev-parse', 'HEAD').stdout.trim();
     await mkdir(join(dir, 'evidence'));
     await mkdir(join(dir, 'artifacts'));
+    await mkdir(join(dir, 'docs'));
+    await writeFile(
+      join(dir, 'docs/platform-matrix.json'),
+      await readFile(new URL('../docs/platform-matrix.json', import.meta.url)),
+    );
     const bytes = Buffer.from('synthetic archive identity fixture');
     const artifactSha256 = createHash('sha256').update(bytes).digest('hex');
     await writeFile(
@@ -99,6 +104,7 @@ test('release gate requires all exact-commit rows and the actual qualified archi
       ['linux', 'arm64'],
       ['win32', 'x64'],
       ['wsl', 'x64'],
+      ['wsl', 'arm64'],
     ]) {
       for (const node of ['v22.16.0', 'v24.21.0']) {
         const path = join(dir, 'evidence', `${platform}-${arch}-${node}.json`);

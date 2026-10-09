@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
+import { archiveZip } from '../scripts/artifact-archive.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 test('Candidate installation preserves existing installs across hash and readiness failures', () => {
@@ -53,25 +54,21 @@ test('Candidate installation preserves existing installs across hash and readine
           .join('\n')}\n`,
       );
       if (windows) {
-        rmSync(archive, { force: true });
-        const result = spawnSync(
-          ps,
-          [
-            '-NoProfile',
-            '-NonInteractive',
-            '-Command',
-            'Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory($env:FIXTURE_SOURCE,$env:FIXTURE_ARCHIVE)',
-          ],
-          {
-            env: {
-              ...process.env,
-              FIXTURE_SOURCE: source,
-              FIXTURE_ARCHIVE: archive,
+        // Windows PowerShell 5.1 targets legacy .NET ZIP path behavior. The release
+        // contract uses '/' names, so generate clean fixtures with the real builder.
+        writeFileSync(
+          archive,
+          archiveZip([
+            ...Object.entries(files).map(([name, value]) => ({
+              name: `redacton-0.2.0/${name}`,
+              data: Buffer.from(value),
+            })),
+            {
+              name: 'redacton-0.2.0/SHA256SUMS',
+              data: readFileSync(join(root, 'SHA256SUMS')),
             },
-            encoding: 'utf8',
-          },
+          ]),
         );
-        assert.equal(result.status, 0, result.stderr);
       } else
         assert.equal(
           spawnSync('tar', ['-czf', archive, '-C', source, 'redacton-0.2.0'])
@@ -223,6 +220,7 @@ test('Candidate installation preserves existing installs across hash and readine
           bad.stderr,
           /unsafe path|link or special file|duplicate or case-colliding/,
         );
+      else assert.match(bad.stderr, /INSTALL_ARCHIVE_INSPECTION/);
       assert.equal(
         readFileSync(join(install, 'current', 'previous-marker'), 'utf8'),
         'preserve',
