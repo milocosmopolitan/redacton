@@ -14,8 +14,8 @@ $ownedImport = $false
 $wsl = $null
 $script:lastExit = $null
 $script:hresult = $null
-$report = [ordered]@{ schemaVersion = 1; status = 'failed'; stage = 'NATIVE_IDENTITY'; code = 'PROBE_FAILED'; nativeArm64 = $false; componentsReady = $false; rebootPending = $false; wslAvailable = $false; rootfsVerified = $false; imported = $false; wsl2Boot = $false; linuxArm64 = $false; cleanupPassed = $false; processExitCode = $null; wslHresult = $null }
-function Invoke-Bounded([string]$Executable, [string[]]$Arguments, [int]$Seconds, [switch]$Cleanup) {
+$report = [ordered]@{ schemaVersion = 1; status = 'failed'; stage = 'NATIVE_IDENTITY'; code = 'PROBE_FAILED'; nativeArm64 = $false; componentsReady = $false; rebootPending = $false; responsePresent = $false; responseValid = $false; wslAvailable = $false; rootfsVerified = $false; imported = $false; wsl2Boot = $false; linuxArm64 = $false; cleanupPassed = $false; processExitCode = $null; wslHresult = $null }
+function Invoke-Bounded([string]$Executable, [string[]]$Arguments, [int]$Seconds, [switch]$Cleanup, [string]$ComponentPath) {
     $script:lastExit = $null
     if (!$Cleanup) {
         $Seconds = [Math]::Min($Seconds, [Math]::Floor(220 - $clock.Elapsed.TotalSeconds))
@@ -26,6 +26,7 @@ function Invoke-Bounded([string]$Executable, [string[]]$Arguments, [int]$Seconds
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    if ($ComponentPath) { $info.Environment['REDACTON_COMPONENT_RESPONSE'] = $ComponentPath }
     foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $info
@@ -78,13 +79,36 @@ namespace RedactonArmProbe {
 '@
     $report.nativeArm64 = [RedactonArmProbe.Native]::IsArm64()
     if (!$report.nativeArm64) { throw 'IDENTITY' }
-    $stage = 'COMPONENTS'
-    # Query in a bounded child; never enable either component.
-    $componentCommand = '$ErrorActionPreference="Stop"; $a=Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux; $b=Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform; [Console]::Write("{0},{1}",[int]($a.State -eq "Enabled" -and $b.State -eq "Enabled"),[int]($a.State -match "Pending" -or $b.State -match "Pending"))'
-    $components = Invoke-Bounded (Join-Path $PSHOME 'pwsh.exe') @('-NoProfile', '-NonInteractive', '-Command', $componentCommand) 15
-    if ($components -notmatch '^[01],[01]$') { throw 'COMPONENT_RESPONSE' }
-    $report.componentsReady = $components[0] -eq '1'
-    $report.rebootPending = $components[2] -eq '1'
+    $stage = 'COMPONENT_QUERY'
+    $code = 'COMPONENT_QUERY_FAILED'
+    # Host rendering is not a data channel. Only this child's owned JSON is read.
+    $componentPath = Join-Path $temporary 'components.json'
+    $componentCommand = @'
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$WarningPreference='SilentlyContinue'
+$InformationPreference='SilentlyContinue'
+try {
+    $a=Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux
+    $b=Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
+    $allowed=@('Enabled','Disabled','EnablePending','DisablePending','DisabledWithPayloadRemoved')
+    if ([string]$a.State -notin $allowed -or [string]$b.State -notin $allowed) { throw 'STATE' }
+    $response=[ordered]@{componentsReady=[bool]($a.State -eq 'Enabled' -and $b.State -eq 'Enabled');rebootPending=[bool]($a.State -match 'Pending' -or $b.State -match 'Pending')}
+    [IO.File]::WriteAllText($env:REDACTON_COMPONENT_RESPONSE,($response | ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+} catch { [Console]::Error.WriteLine('COMPONENT_QUERY_FAILED'); exit 1 }
+'@
+    $null = Invoke-Bounded (Join-Path $PSHOME 'pwsh.exe') @('-NoProfile', '-NonInteractive', '-Command', $componentCommand) 15 -ComponentPath $componentPath
+    $stage = 'COMPONENT_RESPONSE'
+    $code = 'COMPONENT_RESPONSE_INVALID'
+    $report.responsePresent = [IO.File]::Exists($componentPath)
+    if (!$report.responsePresent) { throw 'COMPONENT_RESPONSE' }
+    if (([IO.File]::GetAttributes($componentPath) -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ([IO.FileInfo]::new($componentPath)).Length -gt 1024) { throw 'COMPONENT_RESPONSE' }
+    $components = [IO.File]::ReadAllText($componentPath)
+    if ($components -cnotmatch '^\{"componentsReady":(true|false),"rebootPending":(true|false)\}$') { throw 'COMPONENT_RESPONSE' }
+    $report.componentsReady = $Matches[1] -ceq 'true'
+    $report.rebootPending = $Matches[2] -ceq 'true'
+    $report.responseValid = $true
+    $code = 'PROBE_FAILED'
     if (!$report.componentsReady -or $report.rebootPending) { $status = 'blocked'; $code = 'IMAGE_COMPONENTS_NOT_READY'; $exitCode = 2; throw 'BLOCKED' }
     $stage = 'WSL_LOOKUP'
     $wsl = Join-Path $env:SystemRoot 'System32/wsl.exe'
