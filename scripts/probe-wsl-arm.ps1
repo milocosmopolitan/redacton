@@ -14,7 +14,9 @@ $ownedImport = $false
 $wsl = $null
 $script:lastExit = $null
 $script:hresult = $null
-$report = [ordered]@{ schemaVersion = 1; status = 'failed'; stage = 'NATIVE_IDENTITY'; code = 'PROBE_FAILED'; nativeArm64 = $false; componentsReady = $false; rebootPending = $false; responsePresent = $false; responseValid = $false; wslAvailable = $false; rootfsVerified = $false; imported = $false; wsl2Boot = $false; linuxArm64 = $false; cleanupPassed = $false; processExitCode = $null; wslHresult = $null }
+$script:knownPrerequisite = $false
+$script:wslError = 'NONE'
+$report = [ordered]@{ schemaVersion = 1; status = 'failed'; stage = 'NATIVE_IDENTITY'; code = 'PROBE_FAILED'; nativeArm64 = $false; componentsReady = $false; rebootPending = $false; responsePresent = $false; responseValid = $false; wslAvailable = $false; ownershipVerified = $false; rootfsVerified = $false; imported = $false; wsl2Boot = $false; linuxArm64 = $false; cleanupPassed = $false; processExitCode = $null; wslHresult = $null; wslError = 'NONE' }
 function Invoke-Bounded([string]$Executable, [string[]]$Arguments, [int]$Seconds, [switch]$Cleanup, [string]$ComponentPath) {
     $script:lastExit = $null
     if (!$Cleanup) {
@@ -40,7 +42,15 @@ function Invoke-Bounded([string]$Executable, [string[]]$Arguments, [int]$Seconds
         $errorOutput = $err.GetAwaiter().GetResult().Replace([string][char]0, '')
         $script:lastExit = [int]$process.ExitCode
         if ($process.ExitCode -ne 0) {
-            if (($output + $errorOutput) -match '(?i)0x(80370102|80370114|8007019e)') { $script:hresult = [Convert]::ToUInt32($Matches[1], 16) }
+            $diagnostic = $output + $errorOutput
+            if ($diagnostic -match '(?i)(?<![0-9a-f])0x([0-9a-f]{8})(?![0-9a-f])') {
+                $hex = $Matches[1].ToLowerInvariant()
+                $script:hresult = [Convert]::ToUInt32($hex, 16)
+                $script:knownPrerequisite = $hex -in @('80370102', '80370114', '8007019e')
+            }
+            foreach ($identifier in @('WSL_E_DEFAULT_DISTRO_NOT_FOUND', 'WSL_E_DISTRO_NOT_FOUND', 'WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED', 'WSL_E_WSL_NOT_INSTALLED', 'HCS_E_HYPERV_NOT_INSTALLED', 'REGDB_E_CLASSNOTREG')) {
+                if ($diagnostic -match ('(?<![A-Z0-9_])' + $identifier + '(?![A-Z0-9_])')) { $script:wslError = $identifier; break }
+            }
             throw 'EXIT'
         }
         return $output.Trim()
@@ -66,6 +76,9 @@ namespace RedactonArmProbe {
     }
     [DllImport("kernel32.dll")] static extern void GetNativeSystemInfo(out SystemInfo info);
     public static bool IsArm64() { SystemInfo info; GetNativeSystemInfo(out info); return info.architecture == 12; }
+    [DllImport("Api-ms-win-wsl-api-l1-1-0.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WslIsDistributionRegistered(string distributionName);
     public static async Task<string> ReadBounded(StreamReader reader) {
       var result = new StringBuilder(); var buffer = new char[2048]; int count;
       while ((count = await reader.ReadAsync(buffer, 0, buffer.Length)) > 0) {
@@ -115,8 +128,9 @@ try {
     $report.wslAvailable = [IO.File]::Exists($wsl)
     if (!$report.wslAvailable) { $status = 'blocked'; $code = 'IMAGE_WSL_UNAVAILABLE'; $exitCode = 2; throw 'BLOCKED' }
     $stage = 'OWNERSHIP'
-    $existing = Invoke-Bounded $wsl @('--list', '--quiet') 8
-    if (@($existing -split '\r?\n' | ForEach-Object { $_.Trim() }) -contains $distro) { throw 'COLLISION' }
+    # Native name lookup distinguishes this UUID without requiring a default distro.
+    if ([RedactonArmProbe.Native]::WslIsDistributionRegistered($distro)) { $code = 'OWNERSHIP_COLLISION'; throw 'COLLISION' }
+    $report.ownershipVerified = $true
     $stage = 'ROOTFS_DOWNLOAD'
     $rootfs = Join-Path $temporary 'rootfs.tar.gz'
     $client = [Net.Http.HttpClient]::new()
@@ -159,19 +173,18 @@ try {
     if (!$report.linuxArm64) { throw 'ARCHITECTURE' }
     $status = 'passed'; $code = 'OWNED_WSL2_ARM64_BOOTED'; $exitCode = 0
 } catch {
-    if ($script:hresult -and $stage -in @('WSL2_IMPORT', 'WSL2_BOOT', 'LINUX_IDENTITY')) { $status = 'blocked'; $code = 'IMAGE_WSL2_PREREQUISITE_UNAVAILABLE'; $exitCode = 2 }
+    if ($script:knownPrerequisite -and $stage -in @('WSL2_IMPORT', 'WSL2_BOOT', 'LINUX_IDENTITY')) { $status = 'blocked'; $code = 'IMAGE_WSL2_PREREQUISITE_UNAVAILABLE'; $exitCode = 2 }
     $report.processExitCode = $script:lastExit
     $report.wslHresult = $script:hresult
+    $report.wslError = $script:wslError
 } finally {
     $report.status = $status; $report.stage = $stage; $report.code = $code
     try {
         if ($ownedImport) {
             # An import can fail before registration. Only the exact owned identity is removed.
-            $list = Invoke-Bounded $wsl @('--list', '--quiet') 5 -Cleanup
-            if (@($list -split '\r?\n' | ForEach-Object { $_.Trim() }) -contains $distro) {
+            if ([RedactonArmProbe.Native]::WslIsDistributionRegistered($distro)) {
                 $null = Invoke-Bounded $wsl @('--unregister', $distro) 10 -Cleanup
-                $list = Invoke-Bounded $wsl @('--list', '--quiet') 5 -Cleanup
-                if (@($list -split '\r?\n' | ForEach-Object { $_.Trim() }) -contains $distro) { throw 'CLEANUP' }
+                if ([RedactonArmProbe.Native]::WslIsDistributionRegistered($distro)) { throw 'CLEANUP' }
             }
         }
         if ([IO.Directory]::Exists($temporary)) { [IO.Directory]::Delete($temporary, $true) }
