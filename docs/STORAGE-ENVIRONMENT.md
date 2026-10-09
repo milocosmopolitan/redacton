@@ -21,7 +21,10 @@ failed observation is retryable rather than poisoning the helper process cache.
 Windows stdout must be bounded numeric ticks; unknown output never proves a
 process identity. macOS has second-level precision; an indistinguishable reused
 PID conservatively stays busy. Probes have fixed timeouts of 500 ms on macOS and
-1,000 ms on Windows. Missing probes fail settings saves with a fixed unavailable
+1,500 ms on Windows within the unchanged 2,000 ms helper/SDK deadline. The prior
+1,000 ms Windows phase timed out at 1,052 ms and 1,076 ms in CI before later
+observations succeeded; 1,500 ms is bounded phase headroom and requires actual
+Windows CI validation, not a guaranteed latency. Missing probes fail settings saves with a fixed unavailable
 code; they do not bypass locking.
 
 Only same-namespace ESRCH or a verified changed process start proves abandonment.

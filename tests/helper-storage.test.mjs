@@ -1052,7 +1052,7 @@ process.env.SystemRoot='SYNTHETIC_WINDOWS_ROOT';
 let calls=0;let release;const observations=[];
 const fake=()=>{};
 fake[promisify.custom]=async(_file,args,options)=>{
- calls++;observations.push({bounded:options.timeout===1000,noProfile:args.includes('-NoProfile'),noLogo:args.includes('-NoLogo'),direct:args.at(-1).includes('[System.Diagnostics.Process]::GetProcessById(')&&!args.at(-1).includes('Get-Process')});
+ calls++;observations.push({bounded:options.timeout===1500,noProfile:args.includes('-NoProfile'),noLogo:args.includes('-NoLogo'),direct:args.at(-1).includes('[System.Diagnostics.Process]::GetProcessById(')&&!args.at(-1).includes('Get-Process')});
  if(calls===1){await new Promise(resolve=>release=resolve);return {stdout:'unknown-start'};}
  return {stdout:'638900000000000000'};
 };

@@ -4,10 +4,19 @@ Current-source issue #63 measurements retain the 2,000 ms helper/parent deadline
 and four pending helper calls. The measured local cases do not justify larger
 budgets or a persistent worker. Busy settings locks refuse promptly; they do not
 wait for a timestamp or TTL. Windows process-start probes can each take up to
-1,000 ms, so stale recovery can exceed the shared deadline on a slow machine.
+1,500 ms, so stale recovery can exceed the shared deadline on a slow machine.
 That outcome stays unavailable and retryable; no fallback releases original content.
 Windows timing must be measured before separating settings/recovery deadlines,
 and any change must update both the parent and helper timers.
+
+The Windows 2025 CI run after switching to the direct .NET probe still observed
+its first two ownership calls fail at 1,052 ms and 1,076 ms with the previous
+1,000 ms phase timeout; subsequent storage tests passed once failed observations
+could retry. This is evidence that the original phase budget was too tight for
+those starts, not a completed cold-start latency measurement. The Windows identity
+phase now has 1,500 ms of bounded headroom within the unchanged 2,000 ms total
+helper/SDK deadline. Its sufficiency remains conditional on actual Windows CI;
+no larger total budget, retries, prewarm-only gate or live-owner bypass is added.
 
 ## Method and scope
 
