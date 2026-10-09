@@ -1,6 +1,8 @@
 # Redacton Architecture
 
-Design baseline: October 9, 2026. Everything described as a contract or component below is planned unless explicitly marked as an upstream fact. The repository currently has no implementation.
+Design baseline: October 9, 2026. An experimental Alpha 1 implementation now exists. The [compatibility report](qualification/INTEGRATION_REPORT.md) distinguishes implemented and actually qualified behavior, including current UI and SIGINT evidence, from excluded host/platform paths. Contracts below remain design requirements where the report records no evidence.
+
+The single-layer failure was addressed with an independent outer trusted-result guard, as recorded in [decision 0002](docs/decisions/0002-layered-trusted-results.md). The host can still bypass all guards on arbitrary host/runtime failure; the implementation does not promise secure storage or absolute fail-closed behavior outside its qualified scope.
 
 ## 1. Goal and trust boundary
 
@@ -21,7 +23,7 @@ Implementation hypothesis: supported hooks can replace or withhold selected prom
 | Safe diagnostics | Reports coverage, counts, readiness, and fixed error codes without input content. |
 | Qualification harness | Tests helper behavior and actual host delivery independently. |
 
-Planned paths: `.claude-plugin/plugin.json`, `mod/index.ts`, `mod/adapters/`, `helper/src/`, `helper/dist/`, `tests/`, and `qualification/`. Verify the manifest and entry conventions against the installed SDK before freezing these paths.
+Implemented paths: `.claude-plugin/plugin.json`, `hooks/hooks.json`, `mod/index.jsx`, `mod/adapters/`, `helper/src/`, `helper/dist/`, `tests/`, and `qualification/`. The installed host's strict validation verifies manifest and module conventions.
 
 Keep SDK calls in the registration module. Imported pure functions receive data, not `$` or other host capabilities. No dynamic imports in the Mod and no references outside the plugin root.
 

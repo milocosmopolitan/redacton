@@ -1,95 +1,64 @@
 # Redacton
 
-A local credential-protection Mod for Claude Code, powered by Redact Secret.
+Experimental local credential protection for Claude Code. `/redacton` requests protection; `/redactoff` bypasses scanning for new operations in the current session. New, resumed, and branched CLI sessions request ON.
 
-**Status: design and compatibility investigation; no product implementation or installable release.** The behavior below is the proposed Alpha 1 contract, not a claim that the Mod already works. No supported Claude Code version or production-readiness claim exists yet. The design baseline is October 9, 2026.
+**Alpha 1 protects only qualified textual prompt fields, Read text, and Bash stdout/stderr under the tested host conditions. It is not production-ready and does not prevent Claude Code from storing original prompts or tool arguments.** The host can bypass every plugin guard if the host/runtime or all guards fail. The layered guard handles tested inner-hook/catch failures; it cannot replace a host-enforced fail-closed primitive.
 
-**Compatibility gate: NO-GO on Claude Code 2.1.294, macOS ARM64.** A synthetic loopback test found that a failing post-execution catch handler lets original Bash output reach the next model request. Dependent implementation and release work are blocked until a host boundary passes the failure gate. See the [reproduction and evidence](qualification/host-spike/REPORT.md) and [execution sequence](qualification/EXECUTION.md). No protection feature is shipped by this investigation.
+## Evaluate locally
 
-Redacton aims to redact recognized credentials from supported prompt text and tool results before those values enter Claude's model context. It is a runtime integration, rather than a Git-history scanner.
+The first host qualification target is **Claude Code 2.1.294, macOS ARM64, Node 22.16.0**. Node 24.21.0 helper/state/protocol tests are separately recorded; that does not qualify a Node 24 host installation. Linux, Windows, Desktop, other host versions, and other architectures are not advertised as supported.
 
-## User controls
+From source:
 
-| Command | Behavior |
-| --- | --- |
-| `/redacton` | Requests protection for new operations; reports readiness or an unavailable state. |
-| `/redactoff` | Disables protection for new operations in the current session and immediately warns the user. |
+```sh
+npm ci --ignore-scripts
+npm run build
+npm test
+npm run test:mod
+npm run validate
+node scripts/verify-artifact.mjs
+claude --plugin-dir ./artifacts/redacton-alpha-1
+```
 
-New, restored, and branched sessions start with protection requested ON. There is no global persistent OFF preference in Alpha 1. Repeating either command is safe.
+The generated `artifacts/redacton-alpha-1-evaluation.tar.gz` contains a prebuilt helper and pinned dependencies inside the plugin root. Extract it and load the resulting directory with `--plugin-dir`. Verify the download against its accompanying `SHA256SUMS`. No postinstall compilation or external symlink is required. A local evaluation build is not a published qualified release; see [compatibility evidence](qualification/INTEGRATION_REPORT.md) for the actual qualification status and outstanding gates.
 
-When OFF, display a persistent warning near the prompt:
+## Controls and coverage
 
-> ⚠ Redacton OFF — credential protection disabled
+`/redacton` immediately requests ON and distinguishes loading, unavailable, and ready. Selected content is withheld when protection cannot validate it. Readiness describes the local scanner, not an unconditional security guarantee. Running operations retain the ON/OFF state captured at their start; toggles affect subsequent operations.
 
-On disabling, also display:
+`/redactoff` makes subsequent operations bypass the helper and immediately displays:
 
 > Warning: Redacton is OFF. Credentials may reach Claude unchanged.
 
-OFF bypasses scanning and does not dispatch the local helper. Commands do not retroactively clean conversation history. A running operation retains the state captured when it started.
+The prompt-area indicator while OFF is:
 
-Requested ON and ready are different states. If the scanner cannot start or validate a result, supported protected content must be withheld with a safe error; the UI must not report protection ready.
+> ⚠ Redacton OFF — credential protection disabled
 
-## Initial coverage
+There is no global persistent OFF preference. Commands take no arguments. Actual resumed/branched CLI sessions request ON; the first protected prompt rechecks readiness. Fresh module registration/session.start requests ON, with SDK regression coverage. Editing the module during the evaluated print-stream process did not reload it: its existing OFF state remained OFF. Interactive watch/reload is not qualified. In-process clear/resume reset is SDK-tested.
 
-Alpha 1 targets:
+The normal terminal warning was observed before and after typing, cleared on ON, restored on repeated OFF, and remained after an actual core Bash call while OFF. This was Claude Code 2.1.294 at 40×140 terminal cells; [UI evidence](qualification/ui-report.md) keeps normal and screen-reader results separate.
 
-- Text in `prompt.submit` and supported textual prompt context.
-- Supported textual `Read` results.
-- Supported `Bash` stdout and stderr.
+Recognized credentials are redacted through `@redact-secret/core@0.1.0-beta.14`; recognized private-key content blocks the entire selected event. Zero findings means **no recognized findings**, not safe input. Unknown selected envelopes, unsupported attachments, nonempty tool context, populated persisted/background/image output fields, invalid helper replies, limits, and helper failures withhold selected content.
 
-The compatibility spike must establish the exact event and result schemas on the installed Claude Code version. MCP results are a later milestone. Tool arguments, authentication parameters, images, audio, binary data, and previously stored history are outside Alpha 1. The UI must visibly identify partial coverage.
+MCP, PII, vault/restore, binary/audio/image input, other tools, tool-argument rewriting, authentication parameters, and old history are outside coverage. Withholding a tool result does not undo execution or previously recorded host content. Original permission decisions are preserved and tools are not retried.
 
-A successful scan only means no recognized credential finding under the pinned policy. It is not proof that text is safe. Redacton must not claim that host transcripts or local storage never contain original content: those paths require separate verification.
+## Evidence and limits
 
-## Architecture
+[Compatibility](qualification/INTEGRATION_REPORT.md), [layered failure reproduction](qualification/layered-spike/REPORT.md), [helper budgets](qualification/budgets.md), and [synthetic detection assessment](qualification/quality-report.md) report separate measurements. Model payload, UI, and transcript/storage are separate channels. Passing unit tests alone does not prove host interception.
 
-A thin Claude Mod handles events, commands, state, and UI. A separate local Node helper uses the pinned Redact Secret JavaScript package.
+[Actual session and interruption evidence](qualification/SESSION_REPORT.md) verifies resumed/branched ON defaults, same-process OFF helper bypass, and SIGINT before/after helper dispatch. A delayed child was gone after 2,200 ms; immediate termination and a live terminal Esc gesture are not claimed. [Acceptance accounting](qualification/ACCEPTANCE.md) identifies closure conditions and remaining release/pilot steps.
 
-The Mod runtime does not provide Node or WebAssembly. It must not directly import the scanner. The helper receives text through process stdin, never command arguments, environment variables, or temporary input files. Each selected event uses one helper process and batches its text segments.
+The 29-case synthetic assessment contains a base64 credential miss. It is a small maintainer-curated corpus with six public held-out cases, not independent production-accuracy evidence. The initial single-layer failure remains recorded in [the original spike](qualification/host-spike/REPORT.md).
 
-The initial planned engine is `@redact-secret/core@0.1.0-beta.14`. Its normal initialization uses the package's supported native loading and WASM fallback behavior. Exact dependency and lockfile qualification are required before shipping.
+Configured bounds: **262,144 UTF-8 input bytes, 256 segments, 1,000 findings, 2,097,152 response bytes, four pending protected helper calls, and 2,000 ms including helper startup**. Cancellation discards returned content; the installed SDK has no helper AbortSignal option, so a dispatched child may live until its bounded deadline. The host process API inherits its environment; no clean-child-environment or secure-memory-erasure guarantee is made.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for state transitions, boundaries, protocol, and failure handling.
+No detector network calls, live credential validation, telemetry, or automatic feedback collection are added. Host collection, telemetry, and persistence are separate and not disabled by Redacton. See [the threat model](docs/THREAT_MODEL.md).
 
-## Evaluation and development
+## Reporting, license, and development
 
-There is no installable release yet. The first implementation must provide a plugin manifest, Mod entry point, bundled helper, package-lock.json, and reproducible build.
+Use [GitHub private vulnerability reporting](https://github.com/milocosmopolitan/redacton/security/advisories/new), verified enabled, and follow [SECURITY.md](SECURITY.md). Report conduct concerns through the existing maintainer email in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Public issues are not confidential.
 
-The intended contributor workflow after that scaffold exists is:
+Redacton uses [MIT](LICENSE); pinned dependencies and derived canonical-type data are covered by [third-party notices](THIRD_PARTY_NOTICES.md). Read [CONTRIBUTING.md](CONTRIBUTING.md), [AGENT.md](AGENT.md), and [ARCHITECTURE.md](ARCHITECTURE.md). The singular instruction filename is intentional and explicitly linked by CLAUDE.md.
 
-```sh
-npm ci
-npm run build
-npm test
-```
-
-Use the installed Claude Code documentation for strict plugin validation, Mod tests, and local plugin loading. CI must record the exact host version and generated SDK types used. Passing helper unit tests does not establish that a host hook prevents content from reaching the model.
-
-A release needs an actual Claude Code qualification run proving supported prompt/tool behavior, ON/OFF warnings, model-payload redaction, and safe failure paths. Desktop support requires its own process-execution and UI validation; it is not implied by CLI support.
-
-## Privacy and security
-
-- Scanning is local; Redacton does not make detector network calls or send telemetry.
-- UI and diagnostics contain fixed error codes, canonical detector types, and counts—not matched text, paths, snippets, diffs, or secret hashes.
-- Plaintext necessarily exists temporarily in host and helper memory. No secure-memory-erasure guarantee is made.
-- Protected operations must not pass original content after scanner failures.
-- A post-execution tool-result block cannot undo a tool's side effects.
-- No credential validation against live providers is performed.
-
-Report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/milocosmopolitan/redacton/security/advisories/new), which is enabled for this repository. Follow [SECURITY.md](SECURITY.md); do not post credentials or exploit details in public issues. Private conduct reporting remains a separate pre-release requirement.
-
-## Contributing and conduct
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [AGENT.md](AGENT.md). Use synthetic credentials in examples and tests.
-
-The repository does not currently declare a license. Establish LICENSE and dependency-notice requirements before distribution; do not infer redistribution rights from this design.
-
-## References
-
-- [Claude Mod creation](https://code.claude.com/docs/en/plugins/mods/create)
-- [Mod events](https://code.claude.com/docs/en/plugins/mods/events)
-- [Mod reference](https://code.claude.com/docs/en/plugins/mods/reference)
-- [Plugin loading](https://code.claude.com/docs/en/plugins/loading)
-- [Mod testing](https://code.claude.com/docs/en/plugins/mods/test)
-- [Redact Secret pinned source](https://github.com/redact-secret/redact-secret/tree/v0.1.0-beta.14)
+[Execution gates](qualification/EXECUTION.md) describe dependency order and PR batching. [Independent pilots](qualification/PILOT_PLAN.md) require three real installations and seven-day follow-up. No agents, downloads, or maintainer demonstrations count as adoption evidence.
 

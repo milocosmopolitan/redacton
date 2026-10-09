@@ -1,6 +1,6 @@
 # Contributing to Redacton
 
-Redacton is currently a design-stage Claude Code Mod. Start with [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md). Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Redacton is an experimental Claude Code Mod under host qualification. Start with [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the [compatibility evidence](qualification/INTEGRATION_REPORT.md). Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Choose work
 
@@ -10,12 +10,15 @@ For a new change, describe the user problem, covered input surface, expected beh
 
 ## Development baseline
 
-The scaffold issue will establish npm scripts and repository paths. Once implemented, the intended workflow is:
+The scaffold provides npm scripts and repository paths. The contributor workflow is:
 
 ```sh
-npm ci
+npm ci --ignore-scripts
 npm run build
 npm test
+npm run test:mod
+npm run validate
+node scripts/verify-artifact.mjs
 ```
 
 Use the installed Claude Code tooling for strict plugin validation and Mod tests. Record the host version and generated SDK type version with results. Keep exact dependency pins and package-lock.json current.
@@ -65,5 +68,5 @@ A release requires the architecture's qualification gates, a license and notices
 
 ## Sensitive reports
 
-Do not publish secrets or exploit details in ordinary issues. Use the enabled [GitHub private vulnerability reporting channel](https://github.com/milocosmopolitan/redacton/security/advisories/new) and follow [SECURITY.md](SECURITY.md). A verified private conduct-reporting channel remains a separate pre-release requirement.
+Do not publish secrets or exploit details in ordinary issues. Use the enabled [GitHub private vulnerability reporting channel](https://github.com/milocosmopolitan/redacton/security/advisories/new) and follow [SECURITY.md](SECURITY.md). Conduct concerns use the maintainer email route in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), with independent-review handling described there.
 

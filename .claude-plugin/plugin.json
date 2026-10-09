@@ -1,0 +1,6 @@
+{
+  "name": "redacton",
+  "version": "0.1.0-alpha.1",
+  "description": "Experimental local credential protection. Host failure qualifications and coverage limitations apply.",
+  "author": { "name": "Redacton contributors" }
+}

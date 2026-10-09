@@ -16,9 +16,9 @@ Technical disagreement and criticism of a design are welcome when expressed resp
 
 ## Reporting
 
-For a non-sensitive moderation concern, contact the [maintainer](https://github.com/milocosmopolitan) through an available project channel. For sensitive concerns, ask for a private reporting channel without posting the incident details publicly.
+Report conduct concerns privately to [the maintainer by email](mailto:milowebmaster@gmail.com). This address is published on the maintainer's GitHub profile and matches the repository's public author identity. Describe the concern without including credentials, private transcripts, or unrelated personal data. Ordinary issues are public.
 
-The project currently has no published private conduct-reporting channel. Maintainers must configure one and update this document before a public release. Do not treat an ordinary issue as confidential.
+For a report involving the maintainer, ask for an independent reviewer before sending sensitive details. The subject of a report must not decide its outcome; a reviewer is appointed with the reporter's agreement. If no reviewer can be agreed, explain that the matter remains unresolved rather than claiming an independent investigation. Retaliation for reporting or requesting review is prohibited. There is no response-time or absolute-confidentiality guarantee.
 
 Report security vulnerabilities through the enabled [GitHub private vulnerability reporting channel](https://github.com/milocosmopolitan/redacton/security/advisories/new), following [SECURITY.md](SECURITY.md). Do not put vulnerability details in a public conduct discussion.
 

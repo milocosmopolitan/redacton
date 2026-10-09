@@ -2,7 +2,11 @@
 
 Audit scope: issues [#11](https://github.com/milocosmopolitan/redacton/issues/11), [#12](https://github.com/milocosmopolitan/redacton/issues/12), and [#13](https://github.com/milocosmopolitan/redacton/issues/13). This is a read-only repository/settings assessment, not release qualification or pilot evidence.
 
-## Verified baseline
+## Integration follow-up
+
+The initial gaps below are historical. Integration now adds [MIT licensing](../LICENSE), [exact dependency notices](../THIRD_PARTY_NOTICES.md), [the threat model](../docs/THREAT_MODEL.md), and a private email conduct route in [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md). The address was read from the maintainer's public GitHub profile and matches the repository author; no email was invented and no test report was sent. This verifies address provenance, not inbox delivery or a response guarantee. Private vulnerability reporting remains verified enabled. The [current compatibility evidence](INTEGRATION_REPORT.md) governs release readiness; [pilot evidence](PILOT_PLAN.md) remains uncollected.
+
+## Historical baseline
 
 - The GitHub repository is public. `GET /repos/milocosmopolitan/redacton` returned `license: null`; the community profile also returned no license. No local LICENSE was present at assessment.
 - `GET /repos/milocosmopolitan/redacton/private-vulnerability-reporting` initially returned `{"enabled":false}`. The orchestrator subsequently enabled it under the user's authorization; this audit independently re-read the endpoint and verified `{"enabled":true}`. Repository secret scanning and push protection were also enabled, but these do not provide a reporting channel.
@@ -12,7 +16,7 @@ Audit scope: issues [#11](https://github.com/milocosmopolitan/redacton/issues/11
 - The [engine investigation](engine-research.md) verified the pinned manifest at `packages/javascript/package.json`. Dependency-license completeness still requires review of the final lockfile and packaged native/WASM assets.
 - No installable release or host qualification is established by the baseline documentation. README, ARCHITECTURE, and CONTRIBUTING consistently describe proposed behavior.
 
-## Issue #11: requirements still open
+## Initial issue #11 requirements, superseded by integration follow-up
 
 Choose an explicit project license and correct copyright ownership before distribution. Include the pinned engine's license and review every bundled dependency, native artifact, and WASM fallback using the final lockfile and packaged artifact. A dependency's MIT license does not establish redistribution terms for Redacton's own work.
 
