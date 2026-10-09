@@ -778,10 +778,14 @@ test('replacing a checked settings file with a link is rejected even without nof
     await save(store, initial);
     const target = await fs.realpath(join(root, 'personal/settings.json'));
     const moved = join(root, 'moved.json');
+    const snapshot = await fs.lstat(target, { bigint: true });
+    const expectedOpens =
+      process.platform === 'win32' && snapshot.dev === 0n ? 2 : 1;
     const originalOpen = fs.open;
     let swapped = false;
     let reads = 0;
     let opened = 0;
+    let closed = 0;
     fs.open = async (path, ...args) => {
       if (path === target && !swapped) {
         swapped = true;
@@ -794,9 +798,14 @@ test('replacing a checked settings file with a link is rejected even without nof
       if (path === target) {
         opened++;
         const read = handle.read.bind(handle);
+        const close = handle.close.bind(handle);
         handle.read = (...readArgs) => {
           reads++;
           return read(...readArgs);
+        };
+        handle.close = async () => {
+          await close();
+          closed++;
         };
       }
       return handle;
@@ -805,8 +814,10 @@ test('replacing a checked settings file with a link is rejected even without nof
     try {
       await assert.rejects(load(store), { message: 'SETTINGS_CORRUPT' });
       assert.equal(swapped, true);
-      assert.equal(opened, 1);
       assert.equal(reads, 0);
+      assert.equal(closed, opened);
+      // Zero-device Windows snapshots add one metadata-only verification open.
+      assert.equal(opened, expectedOpens);
     } finally {
       fs.open = originalOpen;
       syncBuiltinESMExports();
