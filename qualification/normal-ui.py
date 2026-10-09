@@ -265,7 +265,7 @@ try:
                 send('syntheticoff_',True);stage='off-prefix';stage_time=time.monotonic()
             elif stage=='off-prefix' and 'Run length,' in view and time.monotonic()-stage_time>.3:
                 observations['warningAfterTyping']='Redacton OFF' in view
-                send('',True);stage='off-length';stage_time=time.monotonic()
+                send('\x15');time.sleep(.15);send('16',True);stage='off-length';stage_time=time.monotonic()
             elif stage=='off-length' and focused('Create draft') and time.monotonic()-stage_time>.3:
                 send('',True);stage='off-draft';raw=''
             elif stage=='off-draft' and focused('Validate') and (visible_words('Draft ready',view) or '· editing · base' in view):
