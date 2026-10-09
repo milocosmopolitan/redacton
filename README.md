@@ -2,7 +2,9 @@
 
 A local credential-protection Mod for Claude Code, powered by Redact Secret.
 
-**Status: design and implementation backlog, October 9, 2026.** The repository is empty at this assessment. The behavior below is the proposed Alpha 1 contract, not a claim that the Mod already works. No supported Claude Code version or production-readiness claim exists yet.
+**Status: design and compatibility investigation; no product implementation or installable release.** The behavior below is the proposed Alpha 1 contract, not a claim that the Mod already works. No supported Claude Code version or production-readiness claim exists yet. The design baseline is October 9, 2026.
+
+**Compatibility gate: NO-GO on Claude Code 2.1.294, macOS ARM64.** A synthetic loopback test found that a failing post-execution catch handler lets original Bash output reach the next model request. Dependent implementation and release work are blocked until a host boundary passes the failure gate. See the [reproduction and evidence](qualification/host-spike/REPORT.md) and [execution sequence](qualification/EXECUTION.md). No protection feature is shipped by this investigation.
 
 Redacton aims to redact recognized credentials from supported prompt text and tool results before those values enter Claude's model context. It is a runtime integration, rather than a Git-history scanner.
 
@@ -74,7 +76,7 @@ A release needs an actual Claude Code qualification run proving supported prompt
 - A post-execution tool-result block cannot undo a tool's side effects.
 - No credential validation against live providers is performed.
 
-A private security-reporting channel must be configured and documented before public release. Until then, contact the [maintainer](https://github.com/milocosmopolitan) to arrange a private channel without posting sensitive details publicly.
+Report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/milocosmopolitan/redacton/security/advisories/new), which is enabled for this repository. Follow [SECURITY.md](SECURITY.md); do not post credentials or exploit details in public issues. Private conduct reporting remains a separate pre-release requirement.
 
 ## Contributing and conduct
 

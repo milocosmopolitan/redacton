@@ -65,5 +65,5 @@ A release requires the architecture's qualification gates, a license and notices
 
 ## Sensitive reports
 
-Do not publish secrets or exploit details in ordinary issues. Until a private reporting channel is configured, ask the [maintainer](https://github.com/milocosmopolitan) for a private channel without including sensitive material. Configuring and documenting that channel is a pre-release requirement.
+Do not publish secrets or exploit details in ordinary issues. Use the enabled [GitHub private vulnerability reporting channel](https://github.com/milocosmopolitan/redacton/security/advisories/new) and follow [SECURITY.md](SECURITY.md). A verified private conduct-reporting channel remains a separate pre-release requirement.
 
