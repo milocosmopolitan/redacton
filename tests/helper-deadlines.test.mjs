@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -88,6 +88,18 @@ async function child(request, initializationMs, inputDelayMs = 0) {
     await cp(new URL('../helper/dist', import.meta.url), join(root, 'helper'), {
       recursive: true,
     });
+    const helperPath = join(root, 'helper/index.js');
+    const helper = await readFile(helperPath, 'utf8');
+    const bootstrap = 'const startedAt = performance.now();';
+    assert.equal(helper.includes(bootstrap), true);
+    // Synchronize with the copied helper clock, not variable Node startup time.
+    await writeFile(
+      helperPath,
+      helper.replace(
+        bootstrap,
+        `${bootstrap}\nprocess.send('BOOTSTRAP_READY');`,
+      ),
+    );
     await mkdir(join(root, 'node_modules/@redact-secret/core'), {
       recursive: true,
     });
@@ -110,7 +122,7 @@ async function child(request, initializationMs, inputDelayMs = 0) {
         NODE_PATH: '',
         REDACTON_SETTINGS_ROOT: join(root, 'settings'),
       },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     let stdout = '',
       stderr = '';
@@ -120,11 +132,19 @@ async function child(request, initializationMs, inputDelayMs = 0) {
     processChild.stderr.on('data', (chunk) => {
       stderr += chunk;
     });
+    const ready = new Promise((resolveReady, rejectReady) => {
+      processChild.once('message', resolveReady);
+      processChild.once('error', rejectReady);
+      processChild.once('exit', () =>
+        rejectReady(new Error('BOOTSTRAP_UNAVAILABLE')),
+      );
+    });
     const finished = new Promise((resolve, reject) => {
       processChild.once('exit', resolve);
       processChild.once('error', reject);
     });
     const timer = setTimeout(() => processChild.kill('SIGKILL'), 8000);
+    assert.equal(await ready, 'BOOTSTRAP_READY');
     const payload = JSON.stringify(request);
     processChild.stdin.on('error', () => {});
     if (inputDelayMs) {
