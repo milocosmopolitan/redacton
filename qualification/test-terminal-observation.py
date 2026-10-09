@@ -16,7 +16,7 @@ if os.environ.get("REDACTON_PYTE_PATH"):
     sys.path.insert(0, os.environ["REDACTON_PYTE_PATH"])
 
 source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text(encoding='utf8'))
-functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'startup_dialog', 'prepare_ui_companion']]
+functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'input_active', 'startup_dialog', 'prepare_ui_companion']]
 scope = {'re': re, 'os': os, 'shutil': shutil, 'json': json}
 exec(compile(ast.Module(body=functions, type_ignores=[]), 'terminal-observation', 'exec'), scope)
 
@@ -72,6 +72,48 @@ class TerminalObservationTest(unittest.TestCase):
         self.screen(['Create   ', 'draft    '])
         self.assertEqual(scope['control_geometry']('Create draft'), {'row': 0, 'column': 0, 'endRow': 1, 'endColumn': 4, 'characters': 11, 'reverse': 11, 'bold': 0, 'colored': 0})
         self.assertIsNone(scope['control_geometry']('Validate'))
+
+    def test_visible_labels_and_stale_focus_never_authorize_field_input(self):
+        # The failed 140-column CI frames showed all labels but only Rule ID bold.
+        lines = [' ' * 78 + 'Rule ID', ' ' * 78 + 'Public prefix,', ' ' * 78 + 'Run length,']
+        buffer = self.screen(lines)
+        for cell in buffer[0].values():
+            cell.bold = True
+        screen = scope['screen']
+        screen.cursor = types.SimpleNamespace(y=2, x=100)
+        self.assertFalse(scope['input_active']('Rule ID'))
+        self.assertFalse(scope['input_active']('Public prefix,'))
+        self.assertFalse(scope['input_active']('Run length,'))
+        screen.cursor = types.SimpleNamespace(y=0, x=95)
+        self.assertTrue(scope['input_active']('Rule ID'))
+        self.assertFalse(scope['input_active']('Public prefix,'))
+        for cell in buffer[0].values():
+            cell.bold = False
+        for cell in buffer[1].values():
+            cell.bold = True
+        screen.cursor = types.SimpleNamespace(y=1, x=118)
+        self.assertFalse(scope['input_active']('Rule ID'))
+        self.assertTrue(scope['input_active']('Public prefix,'))
+        screen.cursor.x = 80
+        self.assertFalse(scope['input_active']('Public prefix,'))
+        self.assertFalse(scope['input_active']('missing field'))
+
+    def test_geometry_reads_one_consistent_display_snapshot(self):
+        buffer = self.screen(['Rule ID'])
+        class Screen:
+            reads = 0
+            def __init__(self):
+                self.buffer = buffer
+            @property
+            def display(self):
+                self.reads += 1
+                if self.reads > 1:
+                    raise AssertionError('geometry rendered another snapshot')
+                return ['Rule ID']
+        screen = Screen()
+        scope['screen'] = screen
+        self.assertEqual(scope['control_geometry']('Rule ID')['characters'], 6)
+        self.assertEqual(screen.reads, 1)
 
     def test_exact_focus_and_receipt(self):
         self.screen(['Create draft'])

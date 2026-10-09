@@ -224,11 +224,12 @@ def startup_dialog(kind, current_stage, view):
     return kind == 'api-key' and 'Do you want to use this API key?' in view
 
 def control_geometry(label):
-    text = '\n'.join(screen.display)
+    lines = screen.display
+    text = '\n'.join(lines)
     positions = []
-    for row, line in enumerate(screen.display):
+    for row, line in enumerate(lines):
         positions.extend((row, column) for column in range(len(line)))
-        if row + 1 < len(screen.display):
+        if row + 1 < len(lines):
             positions.append(None)
     pattern = r'[\s│┃]*'.join(re.escape(char) for char in label if not char.isspace())
     match = re.search(pattern, text)
@@ -237,6 +238,11 @@ def control_geometry(label):
     cells = [positions[index] for index in range(match.start(), match.end()) if not text[index].isspace() and text[index] not in '│┃']
     styles = [screen.buffer[row][column] for row, column in cells]
     return {'row': cells[0][0], 'column': cells[0][1], 'endRow': cells[-1][0], 'endColumn': cells[-1][1], 'characters': len(cells), 'reverse': sum(bool(cell.reverse) for cell in styles), 'bold': sum(bool(cell.bold) for cell in styles), 'colored': sum(cell.fg != 'default' for cell in styles)}
+
+def input_active(label):
+    # All form labels can paint before the host activates the intended input.
+    geometry = control_geometry(label)
+    return bool(geometry and geometry['bold'] == geometry['characters'] and geometry['row'] <= screen.cursor.y <= geometry['endRow'] and screen.cursor.x > geometry['endColumn'])
 
 def off_frame(phase):
     if len(off_frames) >= 8:
@@ -292,7 +298,7 @@ try:
             elif stage == 'invalid' and 'Never put credentials in slash commands' in view:
                 observations['localArgsRejected']=True
                 send('/redact:add-rule',True); stage='form'
-            elif stage == 'form' and 'Rule ID' in view and 'Local panel has keyboard focus' in view:
+            elif stage == 'form' and input_active('Rule ID') and 'Local panel has keyboard focus' in view:
                 observations['formOpened']=True
                 if '--initial-focus-probe' in sys.argv:
                     styles={}
@@ -305,9 +311,9 @@ try:
                     break
                 guided_start=time.monotonic()
                 send('synthetic.rule',True);stage='id';stage_time=time.monotonic()
-            elif stage=='id' and 'Public prefix,' in view and time.monotonic()-stage_time>.3:
+            elif stage=='id' and input_active('Public prefix,') and time.monotonic()-stage_time>.3:
                 send('syntheticcred_',True);stage='prefix';stage_time=time.monotonic()
-            elif stage=='prefix' and 'Run length,' in view and time.monotonic()-stage_time>.3:
+            elif stage=='prefix' and input_active('Run length,') and time.monotonic()-stage_time>.3:
                 send('\x15');time.sleep(.15);send('16',True);stage='length';stage_time=time.monotonic()
             elif stage=='length' and focused('Create draft') and time.monotonic()-stage_time>.3:
                 if '--focus-probe' in sys.argv:
@@ -378,12 +384,12 @@ try:
             elif stage=='ux-off' and 'credential protection disabled' in view:
                 observations['warningBeforeTyping']=True
                 send('/redact:add-rule',True);stage='off-form';raw=''
-            elif stage=='off-form' and 'Local panel has keyboard focus' in view and 'Rule ID' in view:
+            elif stage=='off-form' and 'Local panel has keyboard focus' in view and input_active('Rule ID'):
                 observations['offPanelWarning']='Redacton OFF' in view
                 send('off-rule',True);stage='off-id';stage_time=time.monotonic()
-            elif stage=='off-id' and 'Public prefix,' in view and time.monotonic()-stage_time>.3:
+            elif stage=='off-id' and input_active('Public prefix,') and time.monotonic()-stage_time>.3:
                 send('syntheticoff_',True);stage='off-prefix';stage_time=time.monotonic()
-            elif stage=='off-prefix' and 'Run length,' in view and time.monotonic()-stage_time>.3:
+            elif stage=='off-prefix' and input_active('Run length,') and time.monotonic()-stage_time>.3:
                 observations['warningAfterTyping']='Redacton OFF' in view
                 send('\x15');time.sleep(.15);send('16',True);stage='off-length';stage_time=time.monotonic()
             elif stage=='off-length' and focused('Create draft') and time.monotonic()-stage_time>.3:
