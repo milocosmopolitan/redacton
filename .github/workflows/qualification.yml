@@ -5,7 +5,7 @@ on:
       target:
         description: Native row to rerun, or all
         type: choice
-        options: [all, linux-x64, linux-arm64, darwin-arm64, darwin-x64, win32-x64]
+        options: [all, linux-x64, linux-arm64, darwin-arm64, darwin-x64, win32-x64, wsl-arm-capability]
         default: linux-x64
       node:
         description: Exact Node compatibility row
@@ -37,6 +37,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   plan:
+    if: inputs.target != 'wsl-arm-capability'
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     outputs:
@@ -59,6 +60,7 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include: rows })}\n`);
           JS
   build:
+    if: inputs.target != 'wsl-arm-capability'
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -85,7 +87,7 @@ jobs:
           retention-days: 14
   native:
     needs: [plan, build]
-    if: github.repository == 'milocosmopolitan/redacton'
+    if: github.repository == 'milocosmopolitan/redacton' && inputs.target != 'wsl-arm-capability'
     strategy:
       max-parallel: 2
       fail-fast: false
@@ -166,4 +168,21 @@ jobs:
           name: bounded-host-evidence-${{ matrix.target }}-${{ inputs.node }}
           path: qualification/results/ci-evidence/*.json
           if-no-files-found: error
+          retention-days: 14
+  wsl-arm-capability:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'milocosmopolitan/redacton' && inputs.target == 'wsl-arm-capability'
+    runs-on: windows-11-arm
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/probe-wsl-arm.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bounded-wsl-arm-capability-only
+          path: qualification/results/wsl-arm-capability.json
+          if-no-files-found: warn
           retention-days: 14
