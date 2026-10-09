@@ -33,6 +33,10 @@ All addon names have the `@redact-secret/` prefix and version `0.1.0-beta.14`. A
 - Native Windows without Git for Windows: the official host can use PowerShell instead of Bash. Redacton currently intercepts Bash and Read, not the PowerShell tool. Do not count a PowerShell execution as a protected Bash probe.
 - No upstream engine loading gap has been demonstrated: target addons are declared and the normal WASM fallback is usable on the inspected macOS environment. Open an upstream task only for a reproduced unusable consumer row.
 
+## Local marketplace (candidate)
+
+`npm run build && npm run build:marketplace` wraps the built artifact in `artifacts/marketplace`, a self-contained plugin marketplace with the prebuilt helper and pinned engine. Then run `/plugin marketplace add <absolute path>/artifacts/marketplace` and `/plugin install redact@redacton`. The command-line install flow and manifest validation were checked with Claude Code 2.1.296; this does not qualify protection on any host. Desktop remains unsupported until [#27](https://github.com/milocosmopolitan/redacton/issues/27) is closed with its own evidence. Confirm `/redacton` reports **Protect ready** before relying on it.
+
 ## Installation and troubleshooting
 
 The two-minute README command installs the immutable macOS ARM64 v0.1.0 release only. Portable archives and Windows installation are **candidate workflows**, not newly published verified release assets. Build with `npm run build`, inspect the produced checksum/provenance, then use the explicit candidate inputs described by the installer. Never repin v0.1.0 or reuse its checksum for a different archive.
