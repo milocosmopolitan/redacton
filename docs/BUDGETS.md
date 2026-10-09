@@ -91,6 +91,43 @@ measurements support retaining that simple process-per-event design. The four-ca
 pending bound remains a security/resource cap; sequential timings do not prove
 four-way host throughput or a maximum safe concurrency under every CPU quota.
 
+## Node 24 comparison on the same local platform
+
+A checksum-verified official Node v24.21.0 binary ran from a temporary directory
+without replacing the host Node installation. Ten idle attempts per operation for
+native and forced WASM completed with zero failures. The helper byte hashes match
+the Node 22 run. No competing-CPU Node 24 or cross-version causal speedup claim
+is made, because background load and caches varied between local runs.
+
+| Complete Node 24 event | Native p50 / p95 ms | WASM p50 / p95 ms |
+| --- | ---: | ---: |
+| Scan | 33.794 / 35.269 | 50.656 / 120.577 |
+| Load settings | 35.563 / 40.757 | 51.424 / 65.076 |
+| Save settings | 52.343 / 53.969 | 67.796 / 160.342 |
+| Maximum text scan | 42.395 / 44.691 | 69.974 / 124.492 |
+
+Process-start baseline: 22.984 /
+24.513 ms. First fresh-process events were
+34.031 ms native and
+49.001 ms WASM; subsequent
+warm-filesystem fresh-process events measured
+33.794 / 35.269 ms native and
+55.453 / 120.577 ms WASM.
+
+| Node 24 component | Native p50 / p95 ms | WASM p50 / p95 ms |
+| --- | ---: | ---: |
+| Core module import | 3.522 / 4.551 | 3.546 / 6.385 |
+| Engine initialization | 1.054 / 1.566 | 12.991 / 22.639 |
+| First scan | 0.703 / 1.993 | 4.285 / 5.558 |
+| Warm engine scan | 0.058 / 0.077 | 0.111 / 0.156 |
+
+| Node 24 settings component | Native p50 / p95 ms | WASM p50 / p95 ms |
+| --- | ---: | ---: |
+| Helper modules import | 3.948 / 4.650 | 2.157 / 3.264 |
+| Settings load | 1.364 / 8.294 | 1.397 / 6.312 |
+| Settings save and ownership | 17.353 / 19.258 | 18.923 / 27.646 |
+| Live lock immediate refusal | 6.964 / 8.116 | 7.947 / 12.706 |
+
 ## Provenance and remaining targets
 
 Measured helper base: `1eefaaab570bd88618cd0524cbe9ebf1edffa0ed`. Hashes are generated helper byte
@@ -100,7 +137,8 @@ identities, never hashes of scanned input or rule contents:
 - `core.js`: `bc416665015d93208eb44cc07374b98e6ea66c58930e6045ff5434a1d21f5246`
 - `storage.js`: `8c922779e01fe417c55bd966a1de234e9e065128cc5edfcdb31b00c235c97c23`
 
-Node 24 was not installed locally. Linux, native Windows, WSL, Cowork, VM and
+Node 22.16.0 and the temporary Node 24.21.0 binary were measured locally.
+Linux, native Windows, WSL, Cowork, VM and
 container runtime measurements remain unverified here. The installed Docker
 client's read-only daemon probes did not complete and were interrupted; no image
 was pulled or runtime created. Existing CI jobs can run this script on their
