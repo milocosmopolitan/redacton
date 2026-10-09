@@ -1,0 +1,42 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "files": {
+    "includes": [
+      "helper/src/**/*.ts",
+      "mod/**/*.ts",
+      "mod/**/*.tsx",
+      "tests/**/*.js",
+      "tests/**/*.mjs",
+      "tests/**/*.ts",
+      "tests/**/*.tsx",
+      "scripts/**/*.mjs",
+      "!mod/canonical-types.ts",
+      "qualification/*.mjs",
+      "qualification/fixtures/**/*.ts",
+      "benchmarks/**/*.mjs",
+      "package.json",
+      "biome.json",
+      "tsconfig.*.json",
+      "!**/.claude-plugin/types"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noExplicitAny": "error"
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single"
+    }
+  }
+}

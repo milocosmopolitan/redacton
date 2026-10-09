@@ -1,1 +1,1 @@
-{ "modules": ["../mod/index.jsx"] }
+{ "modules": ["../mod/index.tsx"] }
