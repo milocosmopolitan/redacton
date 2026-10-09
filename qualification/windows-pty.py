@@ -164,6 +164,9 @@ class WindowsPty:
                 raise WindowsPtyFailure('ATTRIBUTE')
             startup = STARTUPINFOEX()
             startup.StartupInfo.cb = ctypes.sizeof(startup)
+            # Null standard handles let ConPTY replace the parent's redirected pipes.
+            # https://github.com/microsoft/terminal/discussions/15814
+            startup.StartupInfo.dwFlags = 0x100  # STARTF_USESTDHANDLES
             startup.lpAttributeList = ctypes.cast(attributes, ctypes.c_void_p)
             command = ctypes.create_unicode_buffer(subprocess.list2cmdline([executable, *arguments]))
             block = ctypes.create_unicode_buffer('\0'.join(f'{key}={value}' for key, value in sorted(env.items(), key=lambda item: item[0].upper())) + '\0\0')
