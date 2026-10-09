@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { archiveZip } from '../scripts/artifact-archive.mjs';
+import { archiveZip } from '../../scripts/artifact-archive.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 function environmentWithPath(path) {
@@ -45,13 +45,14 @@ test('Candidate installation preserves existing installs across hash and readine
     const archive = join(dir, windows ? 'candidate.zip' : 'candidate.tar.gz');
     const ps = 'powershell.exe';
     function build(fail = false) {
+      let helper = `process.stdout.write(JSON.stringify({status:'ok',requestId:'install_check',engineVersion:'0.1.0-beta.14',artifact:'wasm'}))`;
+      if (fail === 'rename-failure')
+        helper = `require('node:fs').chmodSync(require('node:path').dirname(process.cwd()),0);${helper}`;
+      else if (fail === 'hang') helper = 'setInterval(()=>{},1000)';
+      else if (fail) helper = 'process.exit(1)';
       const files = {
         '.claude-plugin/plugin.json': '{"name":"redacton"}',
-        'helper/dist/index.js': fail
-          ? fail === 'rename-failure'
-            ? `require('node:fs').chmodSync(require('node:path').dirname(process.cwd()),0);process.stdout.write(JSON.stringify({status:'ok',requestId:'install_check',engineVersion:'0.1.0-beta.14',artifact:'wasm'}))`
-            : 'process.exit(1)'
-          : `process.stdout.write(JSON.stringify({status:'ok',requestId:'install_check',engineVersion:'0.1.0-beta.14',artifact:'wasm'}))`,
+        'helper/dist/index.js': helper,
       };
       for (const [name, value] of Object.entries(files))
         writeFileSync(join(root, name), value);
@@ -85,14 +86,14 @@ test('Candidate installation preserves existing installs across hash and readine
         );
       return digest(readFileSync(archive));
     }
-    function installCandidate(hash) {
+    function installCandidate(hash, wrapper = resolve('scripts/install.ps1')) {
       const command = windows ? ps : 'bash';
       const args = windows
         ? [
             '-NoProfile',
             '-NonInteractive',
             '-File',
-            resolve('scripts/install.ps1'),
+            wrapper,
             '-ReleaseVersion',
             '0.2.0',
             '-ArchiveSha256',
@@ -114,6 +115,7 @@ test('Candidate installation preserves existing installs across hash and readine
           REDACTON_RELEASE_VERSION: '0.2.0',
           REDACTON_ARCHIVE_PATH: archive,
           REDACTON_ARCHIVE_SHA256: hash,
+          FIXTURE_INSTALLER_SCRIPT: resolve('scripts/install.ps1'),
         },
       });
     }
@@ -182,7 +184,17 @@ test('Candidate installation preserves existing installs across hash and readine
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            "Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[IO.Compression.ZipFile]::Open($env:FIXTURE_ARCHIVE,[IO.Compression.ZipArchiveMode]::Create); try {$e=$z.CreateEntry($env:FIXTURE_NAME); if($env:FIXTURE_TYPE -eq '2'){$e.ExternalAttributes=1073741824 -bor 536870912}; if($env:FIXTURE_DUP -eq 'true'){$null=$z.CreateEntry($env:FIXTURE_NAME)}} finally {$z.Dispose()}",
+            `$ErrorActionPreference='Stop'
+try {
+ Add-Type -AssemblyName System.IO.Compression
+ Add-Type -AssemblyName System.IO.Compression.FileSystem
+ $z=[IO.Compression.ZipFile]::Open($env:FIXTURE_ARCHIVE,[IO.Compression.ZipArchiveMode]::Create)
+ try {
+  $e=$z.CreateEntry($env:FIXTURE_NAME)
+  if($env:FIXTURE_TYPE -eq '2'){$e.ExternalAttributes=1073741824 -bor 536870912}
+  if($env:FIXTURE_DUP -eq 'true'){$null=$z.CreateEntry($env:FIXTURE_NAME)}
+ } finally {$z.Dispose()}
+} catch {[Console]::Error.WriteLine('FIXTURE_ZIP_BUILD_FAILED'); exit 1}`,
           ],
           {
             encoding: 'utf8',
@@ -258,6 +270,46 @@ test('Candidate installation preserves existing installs across hash and readine
       for (const name of readdirSync(install))
         if (name.startsWith('.install.')) chmodSync(join(install, name), 0o700);
     }
+    if (windows) {
+      const wrapper = join(dir, 'activation-failure.ps1');
+      writeFileSync(
+        wrapper,
+        String.raw`param([string]$ReleaseVersion, [string]$ArchiveSha256, [string]$ArchivePath, [string]$InstallDirectory)
+function Move-Item {
+  [CmdletBinding()]
+  param([string]$LiteralPath, [string]$Destination)
+  if ($LiteralPath -match '[\\/]\.install-[^\\]+[\\/]redacton-0\.2\.0$' -and [IO.Path]::GetFileName($Destination) -eq 'current') { throw 'SYNTHETIC_ACTIVATION_FAILURE' }
+  Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+}
+& $env:FIXTURE_INSTALLER_SCRIPT -ReleaseVersion $ReleaseVersion -ArchiveSha256 $ArchiveSha256 -ArchivePath $ArchivePath -InstallDirectory $InstallDirectory
+`,
+      );
+      hash = build();
+      const failedSwitch = installCandidate(hash, wrapper);
+      assert.notEqual(failedSwitch.status, 0);
+      assert.match(failedSwitch.stderr, /INSTALL_ACTIVATION/);
+      assert.equal(
+        readFileSync(join(install, 'current', 'previous-marker'), 'utf8'),
+        'preserve',
+      );
+      assert.equal(
+        readdirSync(install).some((name) => name.startsWith('.previous-')),
+        false,
+      );
+    }
+    hash = build('hang');
+    const hang = installCandidate(hash);
+    assert.notEqual(hang.status, 0);
+    assert.equal(
+      hang.error,
+      undefined,
+      'Installer must enforce its own readiness timeout',
+    );
+    if (windows) assert.match(hang.stderr, /INSTALL_SELF_CHECK/);
+    assert.equal(
+      readFileSync(join(install, 'current', 'previous-marker'), 'utf8'),
+      'preserve',
+    );
     hash = build();
     assert.equal(installCandidate(hash).status, 0);
     assert.equal(

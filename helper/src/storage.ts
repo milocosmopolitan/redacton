@@ -352,6 +352,17 @@ export class SettingsStore {
       fail('SETTINGS_BUSY');
     return { pid: value.pid, nonce: value.nonce };
   }
+  private async leaseOwner(
+    path: string,
+  ): Promise<{ pid: number; nonce: string }> {
+    try {
+      return this.owner(JSON.parse(await this.readBounded(path, 256, true)));
+    } catch {
+      // A lease can turn over during inspection. Unknown ownership stays busy;
+      // never unlink it or confuse lock contention with corrupt settings content.
+      fail('SETTINGS_BUSY');
+    }
+  }
   private dead(pid: number): boolean {
     try {
       process.kill(pid, 0);
@@ -380,9 +391,7 @@ export class SettingsStore {
         } catch (error) {
           if (code(error) !== 'EEXIST') throw error;
         }
-        const old = this.owner(
-          JSON.parse(await this.readBounded(lock, 256, true)),
-        );
+        const old = await this.leaseOwner(lock);
         if (!this.dead(old.pid)) fail('SETTINGS_BUSY');
         const recovery = join(directory, `.recover-${old.nonce}`);
         let claimed = false;
@@ -395,9 +404,7 @@ export class SettingsStore {
             if (code(error) === 'EEXIST') fail('SETTINGS_BUSY');
             throw error;
           }
-          const current = this.owner(
-            JSON.parse(await this.readBounded(lock, 256, true)),
-          );
+          const current = await this.leaseOwner(lock);
           if (
             current.nonce !== old.nonce ||
             current.pid !== old.pid ||
@@ -417,9 +424,7 @@ export class SettingsStore {
   private async release(directory: string, nonce: string): Promise<void> {
     const lock = join(directory, '.settings.lock');
     try {
-      const owner = this.owner(
-        JSON.parse(await this.readBounded(lock, 256, true)),
-      );
+      const owner = await this.leaseOwner(lock);
       if (owner.nonce === nonce && owner.pid === process.pid)
         await unlink(lock);
     } catch {

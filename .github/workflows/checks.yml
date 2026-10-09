@@ -29,7 +29,7 @@ jobs:
           else
             git diff --name-only "$BASE" HEAD > "$RUNNER_TEMP/changed-paths"
             if grep -Eq '^(mod/|helper/|tests/|scripts/|qualification/|\.github/|package(-lock)?\.json|tsconfig\.|biome\.json)' "$RUNNER_TEMP/changed-paths"; then echo 'code=true' >> "$GITHUB_OUTPUT"; else echo 'code=false' >> "$GITHUB_OUTPUT"; fi
-            if grep -Eq '^(mod/|helper/|scripts/|qualification/|\.github/|package(-lock)?\.json|docs/(COMPATIBILITY|PLATFORMS|CI)\.md|README\.md)' "$RUNNER_TEMP/changed-paths"; then echo 'portability=true' >> "$GITHUB_OUTPUT"; else echo 'portability=false' >> "$GITHUB_OUTPUT"; fi
+            if grep -Eq '^(mod/|helper/|scripts/|qualification/|tests/installers/|tests/(artifact-archive|installer).*\.test\.mjs$|\.github/|package(-lock)?\.json|docs/(COMPATIBILITY|PLATFORMS|CI)\.md|README\.md)' "$RUNNER_TEMP/changed-paths"; then echo 'portability=true' >> "$GITHUB_OUTPUT"; else echo 'portability=false' >> "$GITHUB_OUTPUT"; fi
           fi
   pure:
     needs: changes

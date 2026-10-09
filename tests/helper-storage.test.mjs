@@ -387,6 +387,29 @@ test('multiple real processes contending to recover one dead lease retain exactl
       responses.filter((response) => response.status === 'ok').length,
       1,
     );
+    const errorCounts = Object.fromEntries(
+      [
+        'SETTINGS_BUSY',
+        'SETTINGS_CONFLICT',
+        'SETTINGS_UNAVAILABLE',
+        'SETTINGS_CORRUPT',
+        'OTHER',
+      ].map((code) => [
+        code,
+        responses.filter(
+          (response) =>
+            response.status === 'failed' &&
+            (code === 'OTHER'
+              ? ![
+                  'SETTINGS_BUSY',
+                  'SETTINGS_CONFLICT',
+                  'SETTINGS_UNAVAILABLE',
+                  'SETTINGS_CORRUPT',
+                ].includes(response.errorCode)
+              : response.errorCode === code),
+        ).length,
+      ]),
+    );
     assert.ok(
       responses
         .filter((response) => response.status === 'failed')
@@ -397,6 +420,7 @@ test('multiple real processes contending to recover one dead lease retain exactl
             'SETTINGS_UNAVAILABLE',
           ].includes(response.errorCode),
         ),
+      JSON.stringify(errorCounts),
     );
     assert.deepEqual((await load(store)).document, document);
     assert.deepEqual((await readdir(join(root, 'personal'))).sort(), [
@@ -550,4 +574,46 @@ test('replacing a checked settings file with a link is rejected even without nof
       fs.open = originalOpen;
       syncBuiltinESMExports();
     }
+  }));
+
+test('a lease replaced while inspecting its dead owner stays closed and preserves the live lease', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const lock = join(
+      await fs.realpath(join(root, 'personal')),
+      '.settings.lock',
+    );
+    const dead = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+    assert.equal(dead.status, 0);
+    await writeFile(
+      lock,
+      JSON.stringify({
+        pid: dead.pid,
+        nonce: '44444444-4444-4444-8444-444444444444',
+      }),
+    );
+    const live = {
+      pid: process.pid,
+      nonce: '55555555-5555-4555-8555-555555555555',
+    };
+    const originalOpen = fs.open;
+    let swapped = false;
+    fs.open = async (path, ...args) => {
+      if (path === lock && !swapped) {
+        swapped = true;
+        await fs.rename(lock, join(root, 'old-lease'));
+        await writeFile(lock, JSON.stringify(live));
+      }
+      return originalOpen(path, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+      assert.equal(swapped, true);
+    } finally {
+      fs.open = originalOpen;
+      syncBuiltinESMExports();
+    }
+    assert.deepEqual(JSON.parse(await readFile(lock, 'utf8')), live);
+    assert.deepEqual(await load(store), initial);
   }));
