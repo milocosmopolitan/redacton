@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
+    "typeRoots": [".claude-plugin/types", "node_modules/@types"],
+    "types": ["claude-code", "claude-code-tools", "claude-code-mcp", "node"]
+  },
+  "include": [
+    "mod/**/*.ts",
+    "mod/**/*.tsx",
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
+    "qualification/fixtures/**/hooks/*.ts"
+  ]
+}

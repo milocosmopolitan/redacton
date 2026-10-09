@@ -1,72 +1,44 @@
-# Contributing to Redacton
+# Contributing
 
-Redacton is an experimental Claude Code Mod under host qualification. Start with [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the [compatibility evidence](qualification/INTEGRATION_REPORT.md). Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Read [AGENT.md](AGENT.md), [the architecture](ARCHITECTURE.md), and [compatibility](docs/COMPATIBILITY.md) before changing protection boundaries. Follow [the conduct policy](CODE_OF_CONDUCT.md).
 
-## Choose work
+## Development
 
-Use the Alpha 1 epic and its child issues. Begin with the host compatibility spike: interception and safe failure behavior are prerequisites for the product's promise. Avoid adding detector families, an MCP server, a gateway, or vault features before the initial boundary works.
-
-For a new change, describe the user problem, covered input surface, expected behavior, and the evidence needed to validate it. Link the relevant issue and disclose any host-version assumptions.
-
-## Development baseline
-
-The scaffold provides npm scripts and repository paths. The contributor workflow is:
+Run from the source checkout:
 
 ```sh
 npm ci --ignore-scripts
+npm run check
 npm run build
-npm test
 npm run test:mod
 npm run validate
 node scripts/verify-artifact.mjs
 ```
 
-Use the installed Claude Code tooling for strict plugin validation and Mod tests. Record the host version and generated SDK type version with results. Keep exact dependency pins and package-lock.json current.
+`check` runs the current type/lint and unit checks; `typecheck`, `lint`, and `format` are also available individually. Use the installed Claude Code-generated declarations, not an assumed public SDK snapshot. Generated helper output and qualification results are build products, not a second editable source tree.
 
-The hook runtime has no Node or WebAssembly. Keep scanning in the separate Node helper. Imported adapters must be pure and must not receive SDK capabilities. Bundle helper output; do not require host lifecycle scripts to compile it.
+TypeScript belongs in `mod/` and `helper/src/`. SDK calls stay in Mod registration; imported adapters receive data only. Scanning stays in the separate pinned-engine helper. Do not add a Rust detector/helper merely to duplicate the engine's existing native/WASM implementation.
 
-## Security invariants
+## Security and verification
 
-- New sessions request protection ON. OFF applies only to the current session and requires a visible warning.
-- Capture ON/OFF once per operation. Do not reinterpret running operations after a toggle.
-- OFF makes no helper calls.
-- Scanner failure under ON withholds selected content; never fall back to raw text.
-- Do not bypass permissions, retry executed tools, or rewrite authentication/tool arguments.
-- Rebuild result envelopes from an allowlist; remove raw aliases and original references.
-- Send sensitive input only through helper stdin.
-- Use fixed diagnostic codes and safe counts. Never log real or synthetic matched plaintext as a habit.
-- Detector semantics remain in Redact Secret; adapter regexes and manual range edits are out of scope.
+Capture ON/OFF at operation start. OFF dispatches no helper. Selected ON failures withhold content through a fixed response under the documented host/guard conditions; never return cached originals from catches. Rebuild allowlisted envelopes and strip aliases. Preserve permissions, execute a tool once, and leave authentication/tool arguments unchanged. Send sensitive input through stdin only.
 
-## Testing
+Use synthetic fixtures. Test user-visible behavior and failure boundaries, not implementation mirrors. Actual-host regressions in `qualification/` isolate settings and use loopback model responses; helper and SDK tests alone do not prove model delivery. Keep payload, UI and transcript/storage evidence separate. Record versions, actual results and exclusions. Never log credentials, raw input/paths/stderr, arbitrary exceptions or secret hashes.
 
-Use synthetic credentials and stable fixture markers. Never use live credentials, provider-validation calls, personal customer data, or production transcripts.
+For a boundary change, use `qualification/integration-host.mjs` with `prompt`, `read`, `bash`, `off`, or `denied-bash`, then the fault/session/interruption harness appropriate to the change. The retained catch-failure host regression has an explicit negative control:
 
-Test the behavior a user depends on:
+```sh
+node qualification/host-boundary-host.mjs normal
+node qualification/host-boundary-host.mjs guarded-catch-failure
+node qualification/host-boundary-host.mjs unguarded-catch-failure
+```
 
-- ON replacement and OFF bypass for supported prompts and tool results.
-- Actual model payload and its references, independently from UI/transcript rendering.
-- Unknown envelopes, process failure, timeout, output truncation, invalid JSON, and limits.
-- Idempotent commands, persistent warning, session isolation, toggle races, cancellation, and permission denial.
-- Clean installation of the packaged plugin, including native/WASM fallback behavior.
+The last mode intentionally reproduces the host's raw fallback and must not be treated as a protection pass. The terminal UI runner requires a temporary pyte installation. These are actual-host regressions, not replacements for unit checks; disclose any path that was not rerun.
 
-Pure helper tests and host qualification are separate. If a host test cannot run, say so in the PR; do not label the boundary verified. Reversible documentation edits do not require new implementation-mirroring tests.
+Published Alpha 1 evidence is immutable at its release tag. Refactoring source does not requalify that artifact or unrelated platforms. Run the relevant current checks before making new compatibility claims. Desktop, other platforms and an independent production-accuracy claim require their own evidence.
 
-## Pull requests
+## Reviews and releases
 
-Keep changes focused. Include:
+A PR should state the user-visible change, related issue, validation and material limitations. Update current docs when behavior changes; preserve historical evidence through tag links rather than duplicating generated reports in main. Do not claim a planned feature or pilot result merely because code exists.
 
-1. The concrete problem and resulting behavior.
-2. Related issue and covered/excluded surfaces.
-3. Relevant validation, exact versions, and unresolved limitations.
-4. Changes to privacy, failure handling, resource budgets, or packaging.
-
-Update docs when coverage or behavior changes. Never replace a planned capability with an implemented claim solely because code was added.
-
-## Releases
-
-A release requires the architecture's qualification gates, a license and notices, and a private security-reporting channel. Publish compatibility evidence and exclusions with the artifact. Desktop and additional operating systems require separate evidence.
-
-## Sensitive reports
-
-Do not publish secrets or exploit details in ordinary issues. Use the enabled [GitHub private vulnerability reporting channel](https://github.com/milocosmopolitan/redacton/security/advisories/new) and follow [SECURITY.md](SECURITY.md). Conduct concerns use the maintainer email route in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), with independent-review handling described there.
-
+Distribution requires a prebuilt clean artifact, exact pins/lockfile, MIT/dependency notices, private reporting, compatibility evidence and explicit beta exclusions. Vulnerabilities use [private GitHub reporting](https://github.com/milocosmopolitan/redacton/security/advisories/new); conduct concerns use [the documented maintainer email](CODE_OF_CONDUCT.md). Public issues are not confidential. Never send outreach without authorization.

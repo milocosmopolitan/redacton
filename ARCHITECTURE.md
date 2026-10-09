@@ -1,165 +1,41 @@
-# Redacton Architecture
+# Architecture
 
-Design baseline: October 9, 2026. An experimental Alpha 1 implementation now exists. The [compatibility report](qualification/INTEGRATION_REPORT.md) distinguishes implemented and actually qualified behavior, including current UI and SIGINT evidence, from excluded host/platform paths. Contracts below remain design requirements where the report records no evidence.
+Redacton is an experimental Claude Code Mod. TypeScript is the source language for the Mod and Node helper; the host loads the Mod directly, while the helper is prebuilt for distribution. Detection stays in `@redact-secret/core@0.1.0-beta.14`; a Rust helper is not introduced because the existing engine already supplies native and WASM implementations.
 
-The single-layer failure was addressed with an independent outer trusted-result guard, as recorded in [decision 0002](docs/decisions/0002-layered-trusted-results.md). The host can still bypass all guards on arbitrary host/runtime failure; the implementation does not promise secure storage or absolute fail-closed behavior outside its qualified scope.
+## Runtime boundaries
 
-## 1. Goal and trust boundary
+`mod/` registers SDK hooks, commands, and the prompt-area indicator. SDK calls remain in the registration module. State, protocol validation, and adapters are pure helpers that receive data rather than SDK capabilities. The Mod runtime has no Node or WebAssembly and never imports the scanner.
 
-Protect supported textual inputs at Claude Code's model-context boundary using local, deterministic credential redaction.
+`helper/src/` runs in a separate Node process. It initializes the pinned engine and scans a whole event's text segments in one batch. The registration module launches an argv array and sends the request through stdin. Credentials never enter shell text, argv, explicit environment values, or temporary input files. `helper/dist/` is generated prebuilt output.
 
-Upstream fact: the public Mod SDK restricts module imports and provides a host process API rather than Node or WebAssembly in the Mod runtime. Installed generated SDK types are the authority for an implementation. Public documentation and public type snapshots can differ.
+`tests/` covers pure code and SDK event chains. `qualification/` holds reusable actual-host regressions using isolated configuration, synthetic credentials, and loopback model responses. Historical Alpha 1 evidence is linked from [compatibility](docs/COMPATIBILITY.md), rather than copied into the current source tree.
 
-Implementation hypothesis: supported hooks can replace or withhold selected prompt and tool-result content before model delivery. This must be proven with host-level tests. Host transcript persistence, rendered UI, and model payload are separate channels; replacing one does not prove the others are sanitized.
+## State and delivery
 
-## 2. Components
+Each session owns requested ON/OFF, loading/ready/unavailable readiness, a policy epoch, and at most 100 safe records. Requested ON does not mean the helper is ready. `/redacton` requests ON and checks readiness; `/redactoff` bypasses future scans and shows immediate and persistent prompt-area warnings. There is no global saved OFF preference.
 
-| Component | Responsibility |
-| --- | --- |
-| Mod entry point | Registers commands/hooks/UI through the host SDK. |
-| Session controller | Owns requested ON/OFF state, readiness, policy epoch, and operation snapshots. |
-| Pure adapters | Extract supported text and rebuild allowlisted host envelopes; no SDK capabilities passed in. |
-| Local Node helper | Validates protocol, initializes Redact Secret, scans/redacts batches, emits bounded JSON. |
-| Safe diagnostics | Reports coverage, counts, readiness, and fixed error codes without input content. |
-| Qualification harness | Tests helper behavior and actual host delivery independently. |
+A prompt captures policy before awaiting work, extracts supported text/context, validates a helper response, and calls `next` with a fresh sanitized event. Unsupported selected shapes withhold submission. Attachments and other unqualified content are outside coverage.
 
-Implemented paths: `.claude-plugin/plugin.json`, `hooks/hooks.json`, `mod/index.jsx`, `mod/adapters/`, `helper/src/`, `helper/dist/`, `tests/`, and `qualification/`. The installed host's strict validation verifies manifest and module conventions.
+For Read/Bash, an outer hook captures policy and associates the invocation by agent/tool/tool-use identity. The tool executes once with the host's permissions intact. Inner processing publishes only a fully validated sanitized envelope or fixed denial. The outer ON hook ignores the envelope returned by `next` and delivers only that trusted publication. It never returns cached original content from a catch handler. Captured OFF bypasses helper dispatch, including when the user toggles ON while the tool runs.
 
-Keep SDK calls in the registration module. Imported pure functions receive data, not `$` or other host capabilities. No dynamic imports in the Mod and no references outside the plugin root.
+Adapters reconstruct an allowlist. Read scans content and the required file path; Bash scans stdout/stderr. Original `text`/`ref` aliases are discarded. Unknown fields, populated unsupported metadata, and nonempty downstream tool context withhold the whole selected result. Tool arguments and authentication parameters are unchanged.
 
-## 3. Session state and commands
+## Protocol and limits
 
-State includes:
+Protocol version 1 uses opaque request/segment IDs, policy `credentials-alpha1`, and statuses `ok`, `blocked`, or `failed`. Successful replies must contain exactly the requested segment set, pinned engine/policy identity, and canonical finding counts. Duplicate/missing IDs, malformed/trailing JSON, truncation, invalid statuses, limits, and process failures cause withholding. Private-key findings block the whole event; all other recognized credentials redact through the engine's own range handling.
 
-- requestedProtection: ON or OFF;
-- readiness: loading, ready, or unavailable;
-- policyEpoch: incremented for state/policy changes;
-- session identity and bounded safe recent-event records.
+Configured limits: 262,144 UTF-8 input bytes, 256 segments, 1,000 findings, 2,097,152 response bytes, four pending protected helper calls, 2,000 ms including process startup, and 100 recent safe records. These are bounds, not latency guarantees.
 
-Effective UI states are Protect ready, Protect loading/unavailable, and OFF. Coverage is displayed separately. Loading or unavailable must never look like ready.
+Cancellation is checked before dispatch, after response, and before delivery. The installed process API has no AbortSignal option; a dispatched child may continue until its timeout. Its environment overlays the host's inherited environment, so no clean-child-environment guarantee exists.
 
-`/redacton` requests ON immediately for future operations and runs or reuses a readiness check. Until ready, selected protected operations are held or refused safely. `/redactoff` requests OFF for future operations and immediately shows the one-time warning and persistent OFF indicator. Both commands are idempotent and accept no sensitive arguments.
+## Assurance and packaging
 
-Defaults:
+The [accepted layered-guard decision](docs/decisions/0002-layered-trusted-results.md) explains why a single catch handler is insufficient. The host can skip every failing guard or disable the plugin. Redacton cannot guarantee arbitrary host/all-guards failure is fail closed.
 
-| Event | State behavior |
-| --- | --- |
-| New/restored/branched session | Requested ON; readiness must be established. |
-| Hot reload of the same live session | Preserve state if host support is proven; otherwise reset ON with notice. |
-| ON to OFF during a running operation | That operation completes under its captured ON policy. |
-| OFF to ON during a running operation | That operation remains bypassed; show that protection is not retroactive. |
-| OFF operation | No scanner call or helper dispatch. |
+Model payload, UI, and transcript/storage are separate boundaries. Original prompts and tool arguments can persist before interception; blocking output cannot undo execution or prior storage. No secure memory erasure is promised. See [the threat model](docs/THREAT_MODEL.md).
 
-Snapshot state at the earliest supported operation boundary before awaiting work. Store snapshot identifiers locally; never embed credential material in them. If the SDK cannot associate tool invocation and completion reliably, do not claim start-of-operation semantics until an alternative is explicitly designed and tested.
-
-Use session and request identifiers to prevent cross-session or concurrent-result confusion. No global OFF flag. Recent records are bounded to a proposed maximum of 100 and contain only safe metadata.
-
-## 4. Supported interception flow
-
-For each selected operation:
-
-1. Capture session state and policy epoch.
-2. Preserve the host's permission checks and invoke the original operation at most once where needed.
-3. If captured OFF, return the original supported envelope with the persistent warning already visible.
-4. If captured ON, extract all supported textual segments into one bounded batch.
-5. Scan through the helper; validate the complete response.
-6. Rebuild an allowlisted envelope using sanitized text, or withhold the protected result on error.
-7. Emit safe counts and coverage metadata.
-
-For `Read` and `Bash`, scanning follows execution. Blocking the returned content does not undo execution or filesystem changes. Never retry the tool or override a denied permission.
-
-For selected tools, an unknown shape or unsupported content within the promised protected scope must cause whole-result withholding. Unselected tools remain explicitly outside coverage. Unsupported binary content must not be presented as inspected.
-
-## 5. Envelope safety
-
-Host tool results may expose `result`, `text`, `context`, and `ref`. A rewritten result must not retain an alias or reference that lets the host recover the original content.
-
-Do not spread an original envelope and replace a single field. Build a minimal schema-valid envelope from allowlisted fields and sanitized segments. Remove original-content references and verify the host does not follow hidden aliases.
-
-Safe error envelopes must be accepted by the host schema. An invalid replacement can cause the host to skip the hook and use the original, defeating protection.
-
-Catch handlers must return a fixed, tested safe response without scanner calls. After the original tool has run, a catch handler must never call or return a cached `next()` result containing original text. If the host can bypass a failed hook, qualify the exact failure behavior and narrow claims accordingly.
-
-## 6. Helper protocol and packaging
-
-Use `$.process.run` with an argv array and stdin. Do not use shell interpolation. Pin a Node 22/24 evaluation matrix and qualify exact versions before declaring support.
-
-One process per selected event is the initial design. Batch all text segments in that event; measure cold-start cost before considering a long-lived helper.
-
-Request fields:
-
-```json
-{
-  "protocolVersion": 1,
-  "requestId": "opaque-id",
-  "operation": "sanitize",
-  "policyId": "credentials-alpha1",
-  "segments": [{"id": "s0", "text": "synthetic input"}]
-}
-```
-
-A separate self-check operation carries no user input. Response fields include protocol version, request ID, status (`ok`, `blocked`, or `failed`), sanitized segments for successful requests, canonical finding counts, engine version, and a fixed error code where applicable.
-
-Implementation must freeze schemas and reject duplicate IDs, missing segments, unknown statuses, mismatched request IDs, trailing/invalid JSON, and oversized or truncated output. Partial success must never cause original segments to be mixed into an ON result.
-
-Helper stdout is protocol JSON only. Stderr contains fixed codes only. Do not expose raw exceptions, SDK process errors, environment values, or filesystem paths in UI/logs. Default process-environment inheritance needs review; do not add credentials to the child environment.
-
-Bundle prebuilt helper JavaScript in the distributed plugin. The host may install dependencies with lifecycle scripts disabled; runtime postinstall compilation is not a viable assumption. Use an exact dependency pin, npm lockfile, and a clean-artifact installation test. Native/WASM fallback, platform packaging, and notices must be qualified. No symlinks outside the plugin root.
-
-## 7. Detection and policy
-
-The helper uses `@redact-secret/core@0.1.0-beta.14` through its supported initialization and scan/redact API. Verify precise API signatures from the pinned source before implementation.
-
-Redact Secret owns detection and range handling. Redacton owns coverage selection, policy enforcement, transport validation, limits, and safe display.
-
-Alpha 1 policy must redact all recognized credential findings and block private-key content. Do not silently inherit a warning-only default. Do not add regex detection in adapters, hand-edit ranges, or invent incremental chunk stitching. Each event is scanned as finalized bounded text.
-
-Alpha 1 does not enable PII anonymization, vault/restore, live credential validation, per-plaintext exceptions, or automatic rewriting of authentication/tool arguments.
-
-## 8. Failure and resource policy
-
-These are provisional budgets to measure during qualification, not verified performance claims:
-
-| Limit | Initial target |
-| --- | --- |
-| Input text per event | 256 KiB in UTF-8 |
-| Segments per event | 256 |
-| Findings per event | 1,000 |
-| Helper output | 2 MiB, further constrained by the host's output limit |
-| Helper timeout | 2,000 ms including startup |
-| Recent safe records | 100 |
-
-Bound pending work as well as each event. Excess input, queue saturation, startup failures, unavailable dependencies, malformed output, policy errors, and timeouts must withhold selected ON content and emit a safe reason. OFF explicitly bypasses these scanning checks.
-
-Check cancellation before dispatch, after the helper returns, and before delivery. Do not assume the process API supports an AbortSignal: use only installed SDK fields. If cancellation cannot kill the child immediately, acknowledge that it may continue until its timeout.
-
-## 9. Warnings and diagnostics
-
-OFF uses both immediate feedback and a persistent indicator near the prompt. Do not display a modal for every tool result. Verify visibility during typing and after command execution on the target host.
-
-If the host cannot render that surface, Alpha 1 must provide a proven visible fallback at the next prompt and describe the limitation. Do not claim persistent warning support without testing it.
-
-Safe metadata: canonical detector type, counts, fixed error code, engine version, opaque operation ID, and an explicit coverage state. No matched plaintext, raw path, raw tool argument, snippet, diff, or secret hash. A zero-finding result is described as no recognized findings, not safe content.
-
-## 10. Qualification and release gates
-
-Before Alpha 1:
-
-- Prove prompt replacement/withholding and Read/Bash result replacement on an actual host.
-- Verify model payload excludes synthetic markers in ON; inspect transcript/storage separately.
-- Test all original-content aliases, especially `ref`, and forced hook failures.
-- Test missing Node, dependency load failure, malformed/truncated helper output, limits, and timeout.
-- Test OFF bypass, repeated commands, persistent warning, both mid-flight toggle directions, restored/branched sessions, concurrency, cancellation, and permission denial.
-- Verify no tool reexecution or authentication/tool-argument rewriting.
-- Install the clean packaged artifact without lifecycle-script assumptions.
-- Record host version, generated type snapshot, Node/platform matrix, exact core version, test results, and known exclusions.
-- Publish license, dependency notices, private security-reporting instructions, and a beta disclosure.
-
-Mac ARM64 CLI is the first proposed qualification target, then Linux. Windows and Desktop must not be advertised before independent qualification. External user pilots follow technical qualification; CI volume is not adoption evidence.
+Artifacts contain the prebuilt helper, exact dependency lockfile, native/WASM runtime assets inside the plugin root, and license/notices. Clean installation must work with lifecycle scripts disabled, without external symlinks. A source refactor does not alter or requalify an already published release.
 
 ## Sources
 
-[Mod creation](https://code.claude.com/docs/en/plugins/mods/create), [events](https://code.claude.com/docs/en/plugins/mods/events), [reference](https://code.claude.com/docs/en/plugins/mods/reference), [public SDK types](https://github.com/anthropics/claude-code/blob/main/mods/types/claude-code.d.ts), [loading](https://code.claude.com/docs/en/plugins/loading), [testing](https://code.claude.com/docs/en/plugins/mods/test), and [pinned Redact Secret source](https://github.com/redact-secret/redact-secret/tree/v0.1.0-beta.14).
-
-Installed SDK behavior and release qualification take precedence over this provisional design.
-
+Use the declarations generated by the installed Claude Code version. Official [Mod reference](https://code.claude.com/docs/en/plugins/mods/reference), [testing guide](https://code.claude.com/docs/en/plugins/mods/test), and [pinned engine source](https://github.com/redact-secret/redact-secret/tree/v0.1.0-beta.14) describe the relevant APIs; installed behavior takes precedence over public snapshots.

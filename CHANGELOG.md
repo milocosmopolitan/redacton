@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Migrated Mod and helper source to TypeScript with type/lint checks and generated helper distribution output.
+- Consolidated current architecture and developer documentation; archived Alpha 1 evidence remains available at its immutable release tag.
+- Removed obsolete one-off qualification snapshots while retaining reusable security regressions.
+
 ## 0.1.0-alpha.1, experimental evaluation
 
 - Added session-scoped `/redacton` and `/redactoff`, captured operation state, readiness, and prompt-area warning UI.

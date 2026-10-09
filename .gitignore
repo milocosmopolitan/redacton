@@ -4,3 +4,11 @@ node_modules/
 artifacts/
 /.claude-plugin/types/
 /tsconfig.json
+
+/helper/dist/
+/build/
+/mod/canonical-types.ts
+/qualification/results/
+
+/qualification/fixtures/**/tsconfig.json
+/qualification/**/.claude-plugin/types/

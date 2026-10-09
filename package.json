@@ -6,14 +6,28 @@
   "license": "MIT",
   "description": "Experimental local Claude Code credential protection",
   "scripts": {
-    "build": "node helper/build.mjs && node scripts/build-artifact.mjs",
-    "build:helper": "node helper/build.mjs",
-    "test": "node --test tests/*.test.js tests/*.test.mjs",
-    "test:helper": "node --test tests/helper*.test.mjs",
+    "build": "node scripts/build-helper.mjs && node scripts/build-artifact.mjs",
+    "build:helper": "node scripts/build-helper.mjs",
+    "test": "npm run build:helper && node --experimental-strip-types --test tests/*.test.mjs tests/unit/*.test.ts",
+    "test:helper": "npm run build:helper && node --test tests/helper*.test.mjs",
     "test:mod": "node scripts/test-mod.mjs",
     "validate": "node scripts/test-mod.mjs --validate",
-    "decisions:validate": "node scripts/validate-decisions.mjs"
+    "decisions:validate": "node scripts/validate-decisions.mjs",
+    "typecheck": "npm run sdk:types && tsc -p tsconfig.helper.json && tsc -p tsconfig.check.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "sdk:types": "node scripts/test-mod.mjs --types"
   },
-  "engines": { "node": "22.x || 24.x" },
-  "dependencies": { "@redact-secret/core": "0.1.0-beta.14" }
+  "engines": {
+    "node": "22.x || 24.x"
+  },
+  "dependencies": {
+    "@redact-secret/core": "0.1.0-beta.14"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
 }

@@ -7,7 +7,7 @@ status: accepted
 
 ## Context
 
-The first single-layer spike exposed original Bash output when both its handler and catch threw. Decision 0001 stopped dependent implementation pending a solution. Further research and actual host testing established that an independent outer hook can block this inner failure.
+The first single-layer spike exposed original Bash output when both its handler and catch threw. [Archived decision 0001](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/docs/decisions/0001-host-failure-gate.md) stopped dependent implementation pending a solution. Further research and actual host testing established that an independent outer hook can block this inner failure.
 
 ## Decision
 

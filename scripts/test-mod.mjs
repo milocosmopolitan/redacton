@@ -1,19 +1,79 @@
-import { cp, mkdtemp, mkdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
-const root = new URL('../', import.meta.url)
-const destination = await mkdtemp(join(tmpdir(), 'redacton-mod-tests-'))
+import { spawnSync } from 'node:child_process';
+import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+await import('./build-helper.mjs');
+const root = new URL('../', import.meta.url);
+const destination = await mkdtemp(join(tmpdir(), 'redacton-mod-tests-'));
 try {
   for (const name of ['.claude-plugin/plugin.json', 'hooks', 'mod']) {
-    await cp(new URL(name, root), join(destination, name), { recursive: true })
+    await cp(new URL(name, root), join(destination, name), { recursive: true });
   }
-  await mkdir(join(destination, 'tests'))
-  const { readdir } = await import('node:fs/promises')
+  await mkdir(join(destination, 'tests'));
+  await cp(
+    new URL('tests/fixtures/', root),
+    join(destination, 'tests/fixtures'),
+    { recursive: true },
+  );
+  const { readdir } = await import('node:fs/promises');
   for (const name of await readdir(new URL('tests/', root))) {
-    if (name.endsWith('.test.ts') || name.endsWith('.test.tsx')) await cp(new URL(`tests/${name}`, root), join(destination, 'tests', name))
+    if (name.endsWith('.test.ts') || name.endsWith('.test.tsx'))
+      await cp(
+        new URL(`tests/${name}`, root),
+        join(destination, 'tests', name),
+      );
   }
-  const command = process.argv.includes('--validate') ? ['validate', '--strict', destination] : ['test', destination]
-  const result = spawnSync('rtk', ['proxy', 'claude', 'plugin', ...command], { stdio: 'inherit' })
-  process.exitCode = result.status ?? 1
-} finally { await rm(destination, { recursive: true, force: true }) }
+  const command =
+    process.argv.includes('--validate') || process.argv.includes('--types')
+      ? ['validate', '--strict', destination]
+      : ['test', destination];
+  const result = spawnSync('rtk', ['proxy', 'claude', 'plugin', ...command], {
+    stdio: 'inherit',
+  });
+  process.exitCode = result.status ?? 1;
+  if (process.argv.includes('--types') && result.status === 0) {
+    const config = join(destination, 'isolated-config');
+    await mkdir(config);
+    const env = {
+      ...process.env,
+      CLAUDE_CONFIG_DIR: config,
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:1',
+      ANTHROPIC_API_KEY: 'qualification-only',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    };
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    // Only loading the local command generates SDK declarations; the model endpoint is disabled.
+    spawnSync(
+      'rtk',
+      [
+        'proxy',
+        'claude',
+        '-p',
+        '/redactoff',
+        '--plugin-dir',
+        destination,
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--mcp-config',
+        '{"mcpServers":{}}',
+        '--permission-mode',
+        'dontAsk',
+      ],
+      { cwd: destination, env, encoding: 'utf8', timeout: 5000 },
+    );
+    try {
+      await cp(
+        join(destination, '.claude-plugin/types'),
+        new URL('.claude-plugin/types', root),
+        { recursive: true },
+      );
+    } catch {
+      throw new Error('SDK_TYPES_UNAVAILABLE');
+    }
+  }
+} finally {
+  await rm(destination, { recursive: true, force: true });
+}

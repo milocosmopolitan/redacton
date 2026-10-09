@@ -4,7 +4,7 @@ Read this file explicitly before working on this repository. The filename is int
 
 ## Context
 
-Redacton is a planned local credential-protection Claude Code Mod using Redact Secret. The repository begins empty. README.md and ARCHITECTURE.md define the proposed Alpha 1 contract, not implemented behavior.
+Redacton is an experimental local credential-protection Claude Code Mod using Redact Secret. TypeScript source is split between the host Mod and a separate prebuilt Node helper. README.md and ARCHITECTURE.md describe current behavior; docs/COMPATIBILITY.md links immutable published evidence and distinguishes it from current-source validation.
 
 Primary commands are exactly `/redacton` and `/redactoff`. New sessions request ON; OFF produces an immediate warning and a persistent visible warning. OFF bypasses scanning. No observation mode is part of Alpha 1.
 
