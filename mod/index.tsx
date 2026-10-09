@@ -627,10 +627,13 @@ export function register(on: On) {
     return next(e);
   });
 
+  // Terminal and desktop element tables both carry every element the form
+  // uses; other surfaces keep the host's default (nothing drawn).
   on(
     'ui.render',
-    { component: 'Pane', requestId: 'redact-config', surface: 'terminal' },
-    ($, e) => {
+    { component: 'Pane', requestId: 'redact-config' },
+    ($, e, next) => {
+      if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e);
       const { Box, Text, Input, Button } = $.ui.resolve(e);
       const owner = config;
       const formOwner = form;

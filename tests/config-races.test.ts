@@ -311,6 +311,27 @@ test('open local panel withholds accidental composer submission even OFF; explic
   expect(fixture.operations.length).toBe(before);
   await ui.unmount();
 });
+test('local panel draws its form on the desktop surface', async ($, on) => {
+  setup(on);
+  await $.session.start(start);
+  await $.command.run(localCommand('redact:add-rule'));
+  const ui = await $.ui.mount({ ...pane, surface: 'desktop' });
+  expect(await ui.find({ type: 'Text', text: /Redacton ON/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /Local panel/ })).toBeDefined();
+  await ui.unmount();
+});
+test('local panel is not drawn on unsupported surfaces', async ($, on) => {
+  setup(on);
+  await $.session.start(start);
+  await $.command.run(localCommand('redact:add-rule'));
+  let drawn = true;
+  try {
+    await $.ui.mount({ ...pane, surface: 'mobile' });
+  } catch {
+    drawn = false;
+  }
+  expect(drawn).toBe(false);
+});
 test('panel removed by the host without ui.close never leaves composer submission blocked', async ($, on) => {
   setup(on);
   let listed = true;
