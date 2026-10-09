@@ -327,6 +327,16 @@ async function focusLocal(
   }
 }
 
+// The engine's record of open panes is authoritative: a host can remove the
+// pane without raising `ui.close`. An unreadable record keeps the guard.
+async function localPaneListed($: EngineInterface): Promise<boolean> {
+  try {
+    return (await $.ui.panes()).some((pane) => pane.id === 'redact-config');
+  } catch {
+    return true;
+  }
+}
+
 function operationKey(event: {
   tool_use_id?: unknown;
   agentId?: unknown;
@@ -597,6 +607,14 @@ export function register(on: On) {
     },
   ).catch(() => ({ text: 'REDACTON_LOCAL_COMMAND_UNAVAILABLE' }));
 
+  const releaseLocalPane = () => {
+    const draft = config.currentDraft();
+    if (draft) config.cancel(draft.token);
+    imports.cancel();
+    paneOpen = false;
+    form = freshForm();
+  };
+
   on('ui.close', ($, e, next) => {
     if (e.id !== 'redact-config') return next(e);
     if (form.durableBusy && e.origin.kind !== 'unload') {
@@ -605,11 +623,7 @@ export function register(on: On) {
       $.ui.invalidate('ui.render');
       return { value: undefined };
     }
-    const draft = config.currentDraft();
-    if (draft) config.cancel(draft.token);
-    imports.cancel();
-    paneOpen = false;
-    form = freshForm();
+    releaseLocalPane();
     return next(e);
   });
 
@@ -1602,8 +1616,11 @@ export function register(on: On) {
   );
 
   on('prompt.submit', async ($, e, next) => {
-    if (paneOpen && e.origin.kind === 'composer')
-      return { drop: 'REDACTON_CLOSE_LOCAL_PANEL_BEFORE_PROMPT' };
+    if (paneOpen && e.origin.kind === 'composer') {
+      if (await localPaneListed($))
+        return { drop: 'REDACTON_CLOSE_LOCAL_PANEL_BEFORE_PROMPT' };
+      releaseLocalPane();
+    }
     if (
       typeof e.text === 'string' &&
       /^\/(?:redact:(?:status|config|add-rule|remove-rule)|redactconfig)(?:\s|$)/.test(
