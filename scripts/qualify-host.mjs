@@ -4,7 +4,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readTar } from './artifact-archive.mjs';
+import { faultDiagnostics } from './fault-evidence.mjs';
 import { requiredGates } from './qualification-evidence.mjs';
+import { terminalUiDiagnostics } from './terminal-ui-evidence.mjs';
 
 const sha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
 if (sha.status !== 0 || !/^[a-f0-9]{40}\s*$/.test(sha.stdout))
@@ -13,11 +15,20 @@ const dirty = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
 if (dirty.status !== 0 || dirty.stdout.trim()) throw new Error('SOURCE_DIRTY');
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const packageOnly = process.argv.includes('--package-only');
+const probeArgument = process.argv.find((argument) =>
+  argument.startsWith('--probe='),
+);
+const onlyProbe = probeArgument?.slice('--probe='.length) ?? 'all';
+if (
+  !['all', 'terminal-ui', 'guarded-errors'].includes(onlyProbe) ||
+  (packageOnly && onlyProbe !== 'all')
+)
+  throw new Error('PROBE_SELECTION_INVALID');
 const gates = Object.fromEntries(requiredGates.map((key) => [key, 'blocked']));
 const gateCodes = Object.fromEntries(
   requiredGates.map((key) => [
     key,
-    packageOnly ? 'NOT_RUN' : 'MANUAL_REQUIRED',
+    packageOnly || onlyProbe !== 'all' ? 'NOT_RUN' : 'MANUAL_REQUIRED',
   ]),
 );
 const host = packageOnly
@@ -32,6 +43,7 @@ const archive = await readFile(`artifacts/redacton-${pkg.version}.tar.gz`);
 const temp = await mkdtemp(join(tmpdir(), 'redacton-ci-host-'));
 const pluginRoot = join(temp, `redacton-${pkg.version}`);
 function run(gate, script, ...args) {
+  if (onlyProbe !== 'all' && gate !== onlyProbe && gate !== 'package') return;
   // Harness stdout/stderr is discarded. Only a fixed gate and result leave this wrapper.
   const result = spawnSync(process.execPath, [script, ...args], {
     timeout: gate === 'terminal-ui' ? 450000 : 240000,
@@ -43,6 +55,12 @@ function run(gate, script, ...args) {
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     },
   });
+  if (gate === 'terminal-ui')
+    for (const diagnostic of terminalUiDiagnostics(result.stdout ?? ''))
+      console.log(JSON.stringify(diagnostic));
+  if (gate === 'guarded-errors' && script === 'qualification/failure-host.mjs')
+    for (const diagnostic of faultDiagnostics(result.stdout ?? ''))
+      console.log(JSON.stringify(diagnostic));
   gates[gate] =
     result.status === 0 && !result.error
       ? 'passed'
@@ -127,11 +145,13 @@ try {
     // Cancellation uses Unix process groups. Windows remains blocked until an actual portable regression exists.
     if (process.platform !== 'win32')
       run('cancellation', 'qualification/cancellation-host.mjs');
-    else gateCodes.cancellation = 'PLATFORM_UNAVAILABLE';
+    else if (onlyProbe === 'all')
+      gateCodes.cancellation = 'PLATFORM_UNAVAILABLE';
     run('toggle-races', 'qualification/races-host.mjs');
     if (process.platform !== 'win32')
       run('terminal-ui', 'scripts/qualify-ui.mjs');
-    else gateCodes['terminal-ui'] = 'PLATFORM_UNAVAILABLE';
+    else if (['all', 'terminal-ui'].includes(onlyProbe))
+      gateCodes['terminal-ui'] = 'PLATFORM_UNAVAILABLE';
   }
   const wsl =
     process.platform === 'linux' &&

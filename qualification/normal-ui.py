@@ -62,6 +62,7 @@ terminal = pyte.Stream(screen)
 raw = ''
 exit_code = None
 stage = 'startup'
+off_action_counts = {'createDraft': 0, 'validate': 0, 'focusTabs': 0}
 stage_time = time.monotonic()
 trust_answered = False
 key_answered = False
@@ -82,6 +83,10 @@ def poll():
     return exit_code
 
 def send(value, enter=False):
+    if enter and stage == 'off-length':
+        off_action_counts['createDraft'] += 1
+    if enter and stage == 'off-draft':
+        off_action_counts['validate'] += 1
     os.write(master, value.encode())
     if enter:
         time.sleep(.2)
@@ -109,11 +114,18 @@ def preview_pairs(view):
     return [(re.sub(gap,'',a),re.sub(gap,'',b)) for a,b in re.findall(pattern,view)]
 
 def focused(label):
-    for row,line in enumerate(screen.display):
-        if label in line:
-            col=line.index(label)
-            if all(screen.buffer[row][x].reverse for x in range(col,col+len(label))):
-                return True
+    lines = screen.display
+    text = '\n'.join(lines)
+    positions = []
+    for row, line in enumerate(lines):
+        positions.extend((row, column) for column in range(len(line)))
+        if row + 1 < len(lines):
+            positions.append(None)
+    pattern = r'[\s│┃]*'.join(re.escape(char) for char in label if not char.isspace())
+    for match in re.finditer(pattern, text):
+        cells = [positions[index] for index in range(match.start(), match.end()) if not text[index].isspace() and text[index] not in '│┃']
+        if cells and all(screen.buffer[row][column].reverse for row, column in cells):
+            return True
     return False
 
 try:
@@ -253,12 +265,14 @@ try:
                 send('syntheticoff_',True);stage='off-prefix';stage_time=time.monotonic()
             elif stage=='off-prefix' and 'Run length,' in view and time.monotonic()-stage_time>.3:
                 observations['warningAfterTyping']='Redacton OFF' in view
-                send('',True);stage='off-length';stage_time=time.monotonic()
+                send('\x15');time.sleep(.15);send('16',True);stage='off-length';stage_time=time.monotonic()
             elif stage=='off-length' and focused('Create draft') and time.monotonic()-stage_time>.3:
                 send('',True);stage='off-draft';raw=''
-            elif stage=='off-draft' and (('Draft ready' in (view+raw)) or ('· editing · base' in view and focused('Validate'))):
+            elif stage=='off-length' and 'Local panel has keyboard focus' in view and time.monotonic()-stage_time>.5 and off_action_counts['focusTabs'] < 12:
+                send('\t');off_action_counts['focusTabs'] += 1;stage_time=time.monotonic()
+            elif stage=='off-draft' and focused('Validate') and (visible_words('Draft ready',view) or '· editing · base' in view):
                 send('',True);stage='off-validate';raw=''
-            elif stage=='off-validate' and 'TURN_ON_TO_VALIDATE' in (view+raw):
+            elif stage=='off-validate' and visible_words('TURN_ON_TO_VALIDATE',view):
                 observations['offValidationRejected']=True
                 os.write(master,b'\x1b');stage='off-close';stage_time=time.monotonic()
             elif stage=='off-close' and time.monotonic()-stage_time>.7:
@@ -313,6 +327,9 @@ try:
     observations['statusCustomCounts']=re.findall(r'(\d+) custom rules:',view+raw)
     observations['completed'] = stage == 'complete'
     observations['finalStage'] = stage
+    observations['focusedButton'] = next((label for label in ['Create draft', 'Validate', 'Synthetic preview', 'Apply session', 'Revert', 'Remove rule'] if focused(label)), None)
+    observations['offReceiptState'] = {'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view), 'editingDraft': '· editing · base' in view}
+    observations['offActionCounts'] = off_action_counts
     observations['childExitCode'] = poll()
     observations['startupCategories'] = [word for word in ['trust', 'API key', 'Welcome', 'login', 'error', 'Enter'] if word.lower() in displayed().lower()]
     observations['modelRequests']=model_requests

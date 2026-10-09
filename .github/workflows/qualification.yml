@@ -17,6 +17,11 @@ on:
         type: choice
         options: [package, host]
         default: host
+      probe:
+        description: Diagnostic host gate only, partial evidence never qualifies a release
+        type: choice
+        options: [all, terminal-ui, guarded-errors]
+        default: all
 permissions:
   contents: read
 concurrency:
@@ -122,7 +127,7 @@ jobs:
           echo "CLAUDE_CONFIG_DIR=$RUNNER_TEMP/redacton-host-config" >> "$GITHUB_ENV"
           if [ "$RUNNER_OS" = Windows ]; then echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude.exe" >> "$GITHUB_ENV"; else echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude" >> "$GITHUB_ENV"; fi
       - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && steps.host.outcome == 'success' && inputs.scope == 'host' }}
-        run: npm run ci:host
+        run: npm run ci:host -- --probe=${{ inputs.probe }}
       - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'package' }}
         run: npm run ci:host -- --package-only
       - uses: actions/upload-artifact@v4
