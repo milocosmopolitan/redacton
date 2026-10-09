@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readTar } from './artifact-archive.mjs';
 import { cancellationDiagnostics } from './cancellation-evidence.mjs';
+import { configRaceDiagnostics } from './config-race-evidence.mjs';
 import { faultDiagnostics } from './fault-evidence.mjs';
 import { preparePythonDependencies } from './python-probe.mjs';
 import { requiredGates } from './qualification-evidence.mjs';
@@ -79,7 +80,9 @@ function run(gate, script, ...args) {
     for (const diagnostic of terminalUiDiagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(diagnostic));
   if (gate === 'toggle-races' || gate === 'config-races') {
-    for (const value of raceDiagnostics(result.stdout ?? ''))
+    const diagnostics =
+      gate === 'config-races' ? configRaceDiagnostics : raceDiagnostics;
+    for (const value of diagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(value));
     for (const value of windowsPtyDiagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(value));
@@ -98,7 +101,7 @@ function run(gate, script, ...args) {
       ? 'passed'
       : result.status === 2 &&
           !result.error &&
-          ['toggle-races', 'terminal-ui'].includes(gate)
+          ['toggle-races', 'config-races', 'terminal-ui'].includes(gate)
         ? 'blocked'
         : 'failed';
   gateCodes[gate] =
@@ -191,6 +194,7 @@ try {
         : 'qualification/cancellation-host.mjs',
     );
     run('toggle-races', 'scripts/qualify-races.mjs');
+    run('config-races', 'scripts/qualify-config-race.mjs');
     run('terminal-ui', 'scripts/qualify-ui.mjs');
   }
   const wsl =
@@ -232,7 +236,11 @@ try {
   console.log(
     JSON.stringify({
       code: 'HOST_PROBES_COMPLETE',
-      qualification: 'blocked',
+      qualification: Object.values(gates).includes('failed')
+        ? 'failed'
+        : Object.values(gates).includes('blocked')
+          ? 'blocked'
+          : 'passed',
       missing: requiredGates.filter((key) => gates[key] === 'blocked'),
     }),
   );

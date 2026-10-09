@@ -1,12 +1,87 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  terminalUiBootstrap,
   terminalUiDiagnostics,
   terminalUiFrame,
   terminalUiState,
+  windowsPtyChild,
   windowsPtyDiagnostics,
+  windowsPtySelftest,
   windowsPtyState,
 } from '../scripts/terminal-ui-evidence.mjs';
+
+test('startup child diagnostics forward finite categories and reject text or oversized counters', () => {
+  const row = {
+    code: 'WINDOWS_PTY_CHILD',
+    exitCode: 1,
+    bytes: 49,
+    visibleCharacters: 0,
+    controlSequences: 5,
+    category: 'CONTROL_ONLY',
+    tokens: [],
+  };
+  assert.deepEqual(windowsPtyChild(row), row);
+  assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(row)), [row]);
+  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(row)), [row]);
+  for (const invalid of [
+    { ...row, category: 'private payload' },
+    { ...row, tokens: ['/private/path'] },
+    { ...row, tokens: ['bash.exe', 'bash.exe'] },
+    { ...row, bytes: 65537 },
+    { ...row, exitCode: 0x100000000 },
+    { ...row, raw: 'secret' },
+  ]) {
+    assert.equal(windowsPtyChild(invalid), null);
+    assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(invalid)), []);
+  }
+});
+
+test('bootstrap phases and actual ConPTY selftests keep only fixed exception and boolean evidence', () => {
+  const row = {
+    code: 'TERMINAL_UI_BOOTSTRAP',
+    phase: 'observer',
+    passed: false,
+    exitCode: 1,
+    timedOut: false,
+    exception: 'ASSERTION',
+  };
+  assert.deepEqual(terminalUiBootstrap(row), row);
+  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(row)), [row]);
+  for (const invalid of [
+    { ...row, phase: 'private filename' },
+    { ...row, exception: 'raw traceback' },
+    { ...row, exitCode: NaN },
+    { ...row, passed: 'yes' },
+    { ...row, stderr: 'secret' },
+  ])
+    assert.equal(terminalUiBootstrap(invalid), null);
+  const selftest = {
+    code: 'WINDOWS_PTY_SELFTEST',
+    columns: 140,
+    argvCorrect: true,
+    stdinTty: true,
+    stdoutTty: true,
+    stderrTty: true,
+    stderrCaptured: true,
+    dimensionsCorrect: true,
+    inputEcho: true,
+  };
+  assert.deepEqual(windowsPtySelftest(selftest), selftest);
+  assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(selftest)), [selftest]);
+  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(selftest)), [selftest]);
+  assert.equal(
+    windowsPtySelftest({ ...selftest, stdoutTty: 'private text' }),
+    null,
+  );
+  assert.equal(windowsPtySelftest({ ...selftest, columns: 123 }), null);
+  assert.equal(windowsPtySelftest({ ...selftest, pid: 123 }), null);
+  assert.equal(windowsPtySelftest({ ...selftest, stderrTty: 'raw' }), null);
+  assert.equal(
+    windowsPtySelftest({ ...selftest, stderrCaptured: 'payload' }),
+    null,
+  );
+});
 
 test('terminal UI diagnostics forward only bounded whitelisted fields', () => {
   const row = {

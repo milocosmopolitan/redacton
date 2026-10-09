@@ -210,6 +210,8 @@ process.stdout.write(JSON.stringify(response));
             elif phase == 'status' and 'Supported:' in view and 'Configuration' in view:
                 responsive=True;phase='complete';break
         # Cancellation/death proof is collected before cleanup; then freeze every request observation.
+        if phase == 'startup' and terminal.windows:
+            terminal.windows.startup_diagnostic(history)
         child_exit = terminal.poll()
         terminal.close();terminal=None
         release.set();server.shutdown();server.server_close();server=None

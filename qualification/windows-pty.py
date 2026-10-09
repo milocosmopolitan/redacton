@@ -9,6 +9,36 @@ import queue
 import json
 import subprocess
 import threading
+import re
+import time
+
+
+def startup_observation(output, exit_code):
+    """Classify owned startup output without retaining text, arguments, or paths."""
+    output = output[-65536:]
+    controls = re.findall(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))', output)
+    visible = re.sub(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))', '', output)
+    visible = ''.join(char for char in visible if char.isprintable() and not char.isspace())
+    lower = output.lower()
+    tokens = [token for token in ['setting-sources', 'permission-mode', 'git-bash', 'bash.exe', 'CLAUDE_CODE_GIT_BASH_PATH'] if token.lower() in lower]
+    category = 'NO_OUTPUT' if not output else 'CONTROL_ONLY' if not visible else 'UNKNOWN_OUTPUT'
+    phrases = {
+        'COMMAND_LINE': ['unknown option', 'missing argument', 'argument missing', 'invalid value', 'requires an argument'],
+        'SHELL': ['git bash not found', 'could not find git bash', 'cannot find bash', 'claude_code_git_bash_path'],
+        'HOME': ['home directory', 'userprofile is not set', 'could not determine home'],
+        'ENVIRONMENT': ['environment variable is required', 'invalid environment'],
+        'AUTH': ['invalid api key', 'authentication failed', 'api key is required'],
+        'CONSOLE': ['the handle is invalid', 'invalid handle', 'getconsolemode', 'not a tty', 'not a terminal', 'stdin is not', 'stdout is not', 'console mode', 'console handle'],
+        'PLUGIN': ['failed to load plugin', 'invalid plugin', 'plugin not found'],
+        'LOADER': ['cannot find module', 'failed to load', 'module not found', 'dll not found'],
+        'RUNTIME': ['bun error', 'bun v', 'internal error', 'fatal error', 'unhandled exception', 'traceback (most recent call last)', 'panic'],
+    }
+    for candidate, words in phrases.items():
+        if any(word in lower for word in words):
+            category = candidate
+            break
+    return {'code': 'WINDOWS_PTY_CHILD', 'exitCode': exit_code, 'bytes': min(len(output.encode('utf8', errors='replace')), 65536),
+            'visibleCharacters': len(visible), 'controlSequences': len(controls), 'category': category, 'tokens': tokens}
 
 
 class COORD(ctypes.Structure):
@@ -61,6 +91,18 @@ class WindowsPtyFailure(RuntimeError):
 
 
 class WindowsPty:
+    def startup_diagnostic(self, output):
+        # An exited child can precede the reader's final frame. This tail is diagnostic only.
+        if self.poll() is not None:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                chunk = self.read(.05)
+                if chunk:
+                    output = (output + chunk.decode('utf8', errors='replace'))[-65536:]
+                if self.eof.is_set() and self.output.empty():
+                    break
+        print(json.dumps(startup_observation(output, self.poll())), flush=True)
+
     def __init__(self, executable, arguments, cwd, env, columns, rows=40):
         if os.name != 'nt' or not os.path.isabs(executable) or not 1 <= columns <= 32767 or not 1 <= rows <= 32767:
             raise WindowsPtyFailure('ARGUMENT')

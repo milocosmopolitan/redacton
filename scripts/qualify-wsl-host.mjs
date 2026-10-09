@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cancellationDiagnostics } from './cancellation-evidence.mjs';
+import { configRaceDiagnostics } from './config-race-evidence.mjs';
 import { faultDiagnostics } from './fault-evidence.mjs';
 import { validateEvidence } from './qualification-evidence.mjs';
 import { raceDiagnostics } from './race-evidence.mjs';
@@ -65,6 +66,7 @@ export function validateWslHostExport(value, sourceSha, artifactSha256) {
           ...faultDiagnostics(text),
           ...raceDiagnostics(text),
           ...cancellationDiagnostics(text),
+          ...configRaceDiagnostics(text),
         ].some((allowed) => JSON.stringify(allowed) === text)
       )
         throw Error('WSL_HOST_EXPORT_INVALID');
@@ -311,6 +313,7 @@ async function main() {
         ...faultDiagnostics(result.stdout ?? ''),
         ...raceDiagnostics(result.stdout ?? ''),
         ...cancellationDiagnostics(result.stdout ?? ''),
+        ...configRaceDiagnostics(result.stdout ?? ''),
       ].slice(0, 40);
       if (result.error) throw Error('WSL_HOST_PROBE_PROCESS_FAILED');
       const record = JSON.parse(

@@ -373,6 +373,8 @@ def run_direction(binary, root, direction):
                                       'slashDraftVisible': ('/redactoff' if direction == 'on-to-off' else '/redacton') in view},
                 'toolDiagnostics': [value for value in ['permission', 'denied', 'not allowed', 'not found', 'No such', 'outside', 'not authorized', 'policy', 'REDACTON_', 'Exit code', 'SyntaxError'] if value.lower() in first.lower()],
                 'startupDiagnostics': [value for value in ['RACE_CHILD_EXEC_FAILED', 'unknown option', 'only works', 'only supported', 'permission-mode', 'setting-sources', 'plugin-dir', 'no-session-persistence', 'ENOENT', 'EACCES', 'error:', 'requires', 'must be', 'Cannot', 'non-interactive', 'Bun', 'panic', 'assert', 'Segmentation', 'Illegal', 'dyld', 'Permission', 'spawn', 'EPERM', 'Using', 'auth', 'API', 'Welcome', 'trust', 'Error', 'TypeError', 'ReferenceError'] if value in receipt_buffer] if phase == 'startup' else []}
+        if phase == 'startup' and terminal.windows:
+            terminal.windows.startup_diagnostic(receipt_buffer)
         outcome['startupState'] = {'trustAnswered': trust_answered, 'keyAnswered': key_answered,
                                    'trustQuestion': any(value in view for value in ['Do you trust the files in this folder?', 'Is this a project you created or one you trust?']),
                                    'keyQuestion': 'Do you want to use this API key?' in view,

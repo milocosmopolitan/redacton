@@ -456,6 +456,8 @@ try:
     observations['offReceiptState'] = {'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view), 'editingDraft': '· editing · base' in view}
     observations['offActionCounts'] = off_action_counts
     observations['childExitCode'] = poll()
+    if windows_pty and stage == 'startup':
+        windows_pty.startup_diagnostic(raw)
     observations['startupCategories'] = [word for word in ['trust', 'API key', 'Welcome', 'login', 'error', 'Enter'] if word.lower() in displayed().lower()]
     observations['modelRequests']=model_requests
     observations['customWithheldCodes']=[code for code in ['REDACTON_UNAVAILABLE','REDACTON_UNSUPPORTED_SHAPE','REDACTON_WITHHELD','REDACTON_TOOL_DENIED','REDACTON_INPUT_LIMIT','OTHER'] if 'UI_CUSTOM_WITHHELD_'+code in raw]

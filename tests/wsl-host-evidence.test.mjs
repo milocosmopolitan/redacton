@@ -95,3 +95,41 @@ test('source setup failures export fixed states without publishing host records'
   value.rows[0].status = 'blocked';
   assert.throws(() => validateWslHostExport(value, source, artifact));
 });
+
+test('WSL configuration evidence rejects raw text and hidden helper reruns', () => {
+  const value = bundle();
+  const diagnostic = {
+    code: 'CONFIG_RACE_ROW',
+    status: 'passed',
+    stage: 'complete',
+    appliedWhileHeld: true,
+    oldConfigurationObserved: true,
+    newConfigurationObserved: true,
+    firstRawObserved: true,
+    secondMaskedObserved: true,
+    toolResultsSuccessful: true,
+    privateEveryRequest: true,
+    endpointFailed: false,
+    executions: 2,
+    modelRequests: 4,
+    auxiliaryRequests: 2,
+    toolResultCount: 2,
+    stdoutSanitizes: 2,
+  };
+  for (const row of value.rows) {
+    row.status = 'passed';
+    row.record.gates['config-races'] = 'passed';
+    row.record.gateCodes['config-races'] = 'PASS';
+    row.diagnostics.push(structuredClone(diagnostic));
+  }
+  assert.equal(validateWslHostExport(value, source, artifact), value);
+  for (const patch of [
+    { stdoutSanitizes: 3 },
+    { privateEveryRequest: false },
+    { transcript: 'private' },
+  ]) {
+    const invalid = structuredClone(value);
+    Object.assign(invalid.rows[0].diagnostics[0], patch);
+    assert.throws(() => validateWslHostExport(invalid, source, artifact));
+  }
+});

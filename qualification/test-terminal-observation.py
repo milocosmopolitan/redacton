@@ -9,8 +9,10 @@ import pathlib
 import re
 import types
 import unittest
+from unittest.mock import patch
+import runpy
 
-source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text())
+source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text(encoding='utf8'))
 functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'startup_dialog', 'prepare_ui_companion']]
 scope = {'re': re, 'os': os, 'shutil': shutil, 'json': json}
 exec(compile(ast.Module(body=functions, type_ignores=[]), 'terminal-observation', 'exec'), scope)
@@ -20,6 +22,14 @@ class TerminalObservationTest(unittest.TestCase):
         buffer = {row: {column: types.SimpleNamespace(reverse=not char.isspace(), bold=False, fg="default") for column, char in enumerate(line)} for row, line in enumerate(lines)}
         scope['screen'] = types.SimpleNamespace(display=lines, buffer=buffer)
         return buffer
+
+    def test_observer_source_decoding_survives_windows_default(self):
+        original = pathlib.Path.read_text
+        def windows_default(path, encoding=None, errors=None):
+            return original(path, encoding=encoding or 'cp1252', errors=errors)
+        with patch.object(pathlib.Path, 'read_text', windows_default):
+            loaded = runpy.run_path(str(pathlib.Path(__file__)))
+        self.assertTrue(loaded['scope']['visible_words']('TURN_ON_TO_VALIDATE', 'TURN_ON_TO_VAL │ IDATE'))
 
     def test_wrapped_focus_requires_every_label_cell(self):
         buffer = self.screen(['Create   ', 'draft    '])

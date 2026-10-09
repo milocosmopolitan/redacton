@@ -36,8 +36,44 @@ try {
       }
       return result;
     }
-    run([resolve('qualification/test-terminal-observation.py')]);
-    run([resolve('qualification/test-windows-pty.py')]);
+    let bootstrapFailed = false;
+    for (const [phase, file] of [
+      ['observer', 'test-terminal-observation.py'],
+      ['conpty', 'test-windows-pty.py'],
+    ]) {
+      const execution = run(
+        [resolve(`qualification/${file}`)],
+        process.env,
+        true,
+      );
+      const passed = execution.status === 0 && !execution.error;
+      const stderr = execution.stderr ?? '';
+      const exception = passed
+        ? 'NONE'
+        : /^AssertionError(?::|$)/m.test(stderr)
+          ? 'ASSERTION'
+          : /^(?:UnicodeDecodeError|UnicodeEncodeError):/m.test(stderr)
+            ? 'UNICODE'
+            : /^SyntaxError:/m.test(stderr)
+              ? 'SYNTAX'
+              : /^(?:ImportError|ModuleNotFoundError):/m.test(stderr)
+                ? 'IMPORT'
+                : execution.error
+                  ? 'PROCESS'
+                  : 'UNKNOWN';
+      console.log(
+        JSON.stringify({
+          code: 'TERMINAL_UI_BOOTSTRAP',
+          phase,
+          passed,
+          exitCode: execution.status,
+          timedOut: execution.error?.code === 'ETIMEDOUT',
+          exception,
+        }),
+      );
+      bootstrapFailed ||= !passed;
+    }
+    if (bootstrapFailed) throw new Error('TERMINAL_UI_BOOTSTRAP_FAILED');
     let failed = false;
     for (const columns of [140, 80]) {
       const report = join(temporary, `${columns}.json`);
