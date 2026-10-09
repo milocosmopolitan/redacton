@@ -12,13 +12,13 @@ Redacton is a Claude Code Mod. TypeScript is the source language for the Mod and
 
 ## State and delivery
 
-Each session owns requested ON/OFF, loading/ready/unavailable readiness, a policy epoch, and at most 100 safe records. Requested ON does not mean the helper is ready. `/redacton` requests ON and checks readiness; `/redactoff` bypasses future scans and shows immediate and persistent prompt-area warnings. There is no global saved OFF preference.
+Each session owns requested ON/OFF, loading/ready/unavailable readiness, a policy epoch, and at most 100 safe records. Requested ON does not mean the helper is ready. `/redacton` requests ON and makes one coalesced settings-load/self-check recovery attempt; `/redactoff` bypasses future scans and shows immediate and persistent prompt-area warnings. Disabling protection and opening mutation forms require the host-stamped local composer origin, not caller-supplied text. There is no global saved OFF preference. See [recovery taxonomy](docs/RECOVERY.md) and [authority](docs/HOST-AUTHORITY.md).
 
 A prompt captures policy before awaiting work, extracts supported text/context, validates a helper response, and calls `next` with a fresh sanitized event. Unsupported selected shapes withhold submission. Attachments and other unqualified content are outside coverage.
 
 For Read/Bash, an outer hook captures policy and associates the invocation by agent/tool/tool-use identity. The tool executes once with the host's permissions intact. Inner processing publishes only a fully validated sanitized envelope or fixed denial. The outer ON hook ignores the envelope returned by `next` and delivers only that trusted publication. It never returns cached original content from a catch handler. Captured OFF bypasses helper dispatch, including when the user toggles ON while the tool runs.
 
-Adapters reconstruct an allowlist. Read scans content and the required file path; Bash scans stdout/stderr. Original `text`/`ref` aliases are discarded. Unknown fields, populated unsupported metadata, and nonempty downstream tool context withhold the whole selected result. Tool arguments and authentication parameters are unchanged.
+Adapters reconstruct an allowlist. Read scans content and the required file path; Bash scans stdout/stderr. Original `text`/`ref` aliases are discarded. Declared Bash `rawOutputPath` and `structuredContent` are accepted only as absent/undefined data properties and are omitted from rebuilt results. Populated values, accessors, symbols, unknown fields, populated unsupported metadata, and nonempty downstream tool context withhold the whole selected result. Tool arguments and authentication parameters are unchanged.
 
 ## Configuration UX
 
@@ -30,9 +30,9 @@ Configuration uses redact/block recipes compiled and parsed by pinned beta.14. P
 
 The protected scan protocol uses opaque request/segment IDs and statuses `ok`, `blocked`, or `failed`. Its configuration extension binds an exact immutable configuration and opaque revision; mismatched revision/custom-type replies are invalid. The previous published version used protocol 1 and policy `credentials-alpha1`. Successful replies must contain exactly the requested segment set, pinned engine/policy identity, and canonical finding counts. Duplicate/missing IDs, malformed/trailing JSON, truncation, invalid statuses, limits, and process failures cause withholding. Private-key findings block the whole event; all other recognized credentials redact through the engine's own range handling.
 
-Configured limits: 262,144 UTF-8 input bytes, 256 segments, 1,000 findings, 2,097,152 response bytes, four pending protected helper calls, 2,000 ms including process startup, and 100 recent safe records. These are bounds, not latency guarantees.
+Configured limits: 262,144 UTF-8 input bytes, 256 segments, 1,000 findings, 2,097,152 response bytes, four pending protected helper calls, 2,000 ms including process startup for scans/self-checks/configuration previews, 5,000 ms including process startup for settings/transfer operations, and 100 recent safe records. Helper stdin reading/parsing retains 2,000 ms; only a complete validated settings request receives the remaining absolute 5,000 ms helper deadline. These are bounds, not latency guarantees.
 
-Cancellation is checked before dispatch, after response, and before delivery. The installed process API has no AbortSignal option; a dispatched child may continue until its timeout. Its environment overlays the host's inherited environment, so no clean-child-environment guarantee exists.
+Cancellation is checked before dispatch, after response, and before delivery. The installed process API has no AbortSignal option; a dispatched child may continue until its timeout. Its environment overlays the host's inherited environment. All helper launches clear inherited `NODE_OPTIONS` and `NODE_PATH`, but other host values remain inherited, so no clean-child-environment guarantee exists. Settings locks bind a nonce to host/namespace and observed process start; indeterminate ownership remains busy, with an explicit separate-root recovery route. See [storage and environment](docs/STORAGE-ENVIRONMENT.md).
 
 ## Assurance and packaging
 

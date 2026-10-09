@@ -53,6 +53,23 @@ jobs:
       - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run check:pure
+      - run: node scripts/measure-budgets.mjs
+        env:
+          REDACTON_BUDGET_REPORT: qualification/results/budgets.json
+      - name: Measure one-CPU process contention on the existing Linux Node 22 VM
+        if: matrix.node == '22.16.0'
+        run: |
+          benchmark_cpu="$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"
+          taskset -c "$benchmark_cpu" node scripts/measure-budgets.mjs --cpu-load --single-cpu-affinity
+        env:
+          REDACTON_BUDGET_REPORT: qualification/results/budgets-single-cpu.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: budgets-linux-${{ matrix.node }}
+          path: qualification/results/budgets*.json
+          retention-days: 3
+          if-no-files-found: error
       - run: npm run ci:identity
   sdk:
     needs: changes
@@ -104,8 +121,20 @@ jobs:
       - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
       - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      # Capture the first Windows ownership probe before storage tests warm PowerShell.
+      - if: runner.os == 'Windows'
+        run: node scripts/measure-budgets.mjs
+        env:
+          REDACTON_BUDGET_REPORT: qualification/results/budgets.json
       - if: runner.os == 'Windows'
         run: npm run check:pure
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        with:
+          name: budgets-windows-22.16.0
+          path: qualification/results/budgets.json
+          retention-days: 3
+          if-no-files-found: error
       - run: npm run build
       - id: artifact
         run: node scripts/verify-artifact.mjs --native

@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { ScanAndRedactOptions } from '@redact-secret/core';
 import canonicalTypes from './canonical-types.json' with { type: 'json' };
 import type { ActiveConfiguration } from './config.js';
@@ -17,6 +18,7 @@ export const LIMITS = Object.freeze({
   findings: 1000,
   outputBytes: 2 * 1024 * 1024,
   timeoutMs: 2000,
+  settingsTimeoutMs: 5000,
 });
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const TYPES = new Set(CANONICAL_TYPES);
@@ -30,6 +32,82 @@ const keys = (
   Object.keys(value).length === expected.length &&
   expected.every((key) => Object.hasOwn(value, key));
 const array = (value: unknown): value is unknown[] => Array.isArray(value);
+// Settings gain time only after the complete closed envelope and documents validate.
+export function requestDeadlineMs(value: unknown): number {
+  try {
+    if (
+      !keys(value, [
+        'protocolVersion',
+        'requestId',
+        'operation',
+        'policyId',
+        'storage',
+      ]) ||
+      value.protocolVersion !== 2 ||
+      typeof value.requestId !== 'string' ||
+      !ID.test(value.requestId) ||
+      value.policyId !== POLICY_ID ||
+      typeof value.operation !== 'string' ||
+      ![
+        'load-config',
+        'save-config',
+        'reset-config',
+        'import-config',
+        'export-config',
+      ].includes(value.operation)
+    )
+      return LIMITS.timeoutMs;
+    const storage = value.storage;
+    if (
+      !record(storage) ||
+      (storage.scope !== 'personal' && storage.scope !== 'project') ||
+      typeof storage.approved !== 'boolean'
+    )
+      return LIMITS.timeoutMs;
+    const saving =
+      value.operation === 'save-config' || value.operation === 'reset-config';
+    const exporting = value.operation === 'export-config';
+    if (
+      !keys(storage, [
+        'scope',
+        'approved',
+        ...(storage.scope === 'project' ? ['projectRoot'] : []),
+        ...(saving
+          ? ['expectedIdentity', 'expectedRevision', 'expectedDocument']
+          : []),
+        ...(exporting ? ['expectedIdentity'] : []),
+        ...(value.operation === 'save-config' || exporting ? ['document'] : []),
+      ])
+    )
+      return LIMITS.timeoutMs;
+    if (
+      storage.scope === 'project' &&
+      (typeof storage.projectRoot !== 'string' ||
+        !isAbsolute(storage.projectRoot))
+    )
+      return LIMITS.timeoutMs;
+    if (
+      (saving || exporting) &&
+      (typeof storage.expectedIdentity !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(storage.expectedIdentity))
+    )
+      return LIMITS.timeoutMs;
+    if (saving) {
+      if (
+        typeof storage.expectedRevision !== 'string' ||
+        !/^(?:absent|[0-9a-f-]{36})$/.test(storage.expectedRevision)
+      )
+        return LIMITS.timeoutMs;
+      validateConfigDocument(storage.expectedDocument);
+    }
+    if (value.operation === 'save-config' || exporting)
+      validateConfigDocument(storage.document);
+    return LIMITS.settingsTimeoutMs;
+  } catch {
+    return LIMITS.timeoutMs;
+  }
+}
+
 const policy = Object.freeze({
   evaluate: (finding: { type: string }): 'block' | 'redact' =>
     finding.type === 'private_key' ? 'block' : 'redact',

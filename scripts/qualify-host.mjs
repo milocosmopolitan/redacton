@@ -56,7 +56,7 @@ let pythonBootstrapFailure;
 function run(gate, script, ...args) {
   if (onlyProbe !== 'all' && gate !== onlyProbe && gate !== 'package') return;
   const needsPython =
-    ['terminal-ui', 'toggle-races', 'config-races'].includes(gate) ||
+    ['terminal-ui', 'toggle-races', 'config-races', 'off'].includes(gate) ||
     (gate === 'cancellation' && process.platform === 'win32');
   if (needsPython && pythonBootstrapFailure) {
     gates[gate] = pythonBootstrapFailure.status;
@@ -181,6 +181,7 @@ try {
       run(gate, 'qualification/integration-host.mjs', mode);
     if (gates.off === 'passed')
       run('off', 'qualification/stream-session-host.mjs');
+    if (gates.off === 'passed') run('off', 'qualification/authority-host.mjs');
     run(
       'guarded-errors',
       'qualification/host-boundary-host.mjs',

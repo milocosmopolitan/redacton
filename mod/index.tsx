@@ -11,6 +11,7 @@ import {
   rebuildPrompt,
   rebuildToolResult,
 } from './adapters/text.ts';
+import { isExplicitLocalUser } from './authority.ts';
 import {
   type ActiveConfiguration,
   ConfigController,
@@ -34,6 +35,7 @@ import {
   utf8Bytes,
   validateProcessResponse,
 } from './protocol.ts';
+import { failureScope, settingsRemediation } from './recovery.ts';
 import { ImportReviewController, SavedSettingsController } from './settings.ts';
 import type { OperationSnapshot, SessionState } from './state.ts';
 import {
@@ -60,6 +62,10 @@ interface Runtime {
   settingsCode: string;
   generation: number;
   personalPromise: Promise<void> | null;
+  recoveryPromise: Promise<void> | null;
+  checkPromise: Promise<void> | null;
+  healthRevision: string;
+  healthEpoch: number;
 }
 interface OperationSlot {
   captured: OperationSnapshot;
@@ -76,36 +82,59 @@ async function runHelper(
   signal: AbortSignal | undefined,
   runtime: Runtime,
 ): Promise<HelperResponse> {
-  if (signal?.aborted) return { status: 'failed', errorCode: 'CANCELLED' };
+  const localFailure = (errorCode: string): HelperResponse => {
+    if (request.operation === 'sanitize') {
+      record(controller, { errorCode, count: 0 });
+      $.ui.invalidate('ui.render');
+    }
+    return { status: 'failed', errorCode };
+  };
+  if (signal?.aborted) return localFailure('CANCELLED');
+  const generation = runtime.generation;
+  const healthEpoch = runtime.healthEpoch;
   const payload = JSON.stringify(request);
   if (utf8Bytes(payload) > LIMITS.inputBytes)
-    return { status: 'failed', errorCode: 'INPUT_LIMIT' };
-  if (runtime.pending >= LIMITS.pending)
-    return { status: 'failed', errorCode: 'QUEUE_SATURATED' };
+    return localFailure('INPUT_LIMIT');
+  if (runtime.pending >= LIMITS.pending) return localFailure('QUEUE_SATURATED');
   runtime.pending += 1;
   try {
     const result = await $.process.run(
       ['node', `${$.plugin.root}/helper/dist/index.js`],
-      { stdin: payload, timeoutMs: LIMITS.timeoutMs },
+      {
+        stdin: payload,
+        timeoutMs: LIMITS.timeoutMs,
+        env: { NODE_OPTIONS: '', NODE_PATH: '' },
+      },
     );
-    if (signal?.aborted) return { status: 'failed', errorCode: 'CANCELLED' };
+    if (signal?.aborted) return localFailure('CANCELLED');
     const response = validateProcessResponse(result, request);
-    if (
-      response.status === 'failed' &&
-      (request.operation === 'sanitize' || request.operation === 'self-check')
-    ) {
-      runtime.observedAt = Date.now();
-      setReadiness(controller, 'unavailable');
+    if (response.status !== 'ok' && request.operation === 'sanitize') {
+      record(controller, { errorCode: response.errorCode, count: 0 });
+      if (
+        failureScope(request.operation, response.errorCode) === 'scanner' &&
+        runtime.generation === generation &&
+        runtime.healthEpoch === healthEpoch &&
+        runtime.healthRevision === request.config?.revision
+      ) {
+        runtime.healthEpoch += 1;
+        runtime.observedAt = Date.now();
+        setReadiness(controller, 'unavailable');
+      }
       $.ui.invalidate('ui.render');
     }
     return response;
   } catch {
-    if (
-      request.operation === 'sanitize' ||
-      request.operation === 'self-check'
-    ) {
-      setReadiness(controller, 'unavailable');
-      runtime.observedAt = Date.now();
+    if (request.operation === 'sanitize') {
+      record(controller, { errorCode: 'HELPER_UNAVAILABLE', count: 0 });
+      if (
+        runtime.generation === generation &&
+        runtime.healthEpoch === healthEpoch &&
+        runtime.healthRevision === request.config?.revision
+      ) {
+        runtime.healthEpoch += 1;
+        setReadiness(controller, 'unavailable');
+        runtime.observedAt = Date.now();
+      }
       $.ui.invalidate('ui.render');
     }
     return { status: 'failed', errorCode: 'HELPER_UNAVAILABLE' };
@@ -122,25 +151,47 @@ async function checkReadiness(
 ): Promise<void> {
   if (!controller.requestedProtection || runtime.personalLoad !== 'ready')
     return;
+  if (runtime.checkPromise && runtime.healthRevision === config.revision) {
+    await runtime.checkPromise;
+    return;
+  }
   const generation = runtime.generation;
+  const epoch = ++runtime.healthEpoch;
+  runtime.healthRevision = config.revision;
   setReadiness(controller, 'loading');
-  const response = await runHelper(
-    $,
-    controller,
-    {
-      protocolVersion: 2,
-      config,
-      requestId: `check-${++runtime.sequence}`,
-      operation: 'self-check',
-      policyId: POLICY_ID,
-    },
-    undefined,
-    runtime,
-  );
-  if (runtime.generation !== generation) return;
-  setReadiness(controller, response.status === 'ok' ? 'ready' : 'unavailable');
-  runtime.observedAt = Date.now();
-  $.ui.invalidate('ui.render');
+  const work = (async () => {
+    const response = await runHelper(
+      $,
+      controller,
+      {
+        protocolVersion: 2,
+        config,
+        requestId: `check-${++runtime.sequence}`,
+        operation: 'self-check',
+        policyId: POLICY_ID,
+      },
+      undefined,
+      runtime,
+    );
+    if (
+      runtime.generation !== generation ||
+      runtime.healthRevision !== config.revision ||
+      runtime.healthEpoch !== epoch
+    )
+      return;
+    setReadiness(
+      controller,
+      response.status === 'ok' ? 'ready' : 'unavailable',
+    );
+    runtime.observedAt = Date.now();
+    $.ui.invalidate('ui.render');
+  })();
+  runtime.checkPromise = work;
+  try {
+    await work;
+  } finally {
+    if (runtime.checkPromise === work) runtime.checkPromise = null;
+  }
 }
 
 async function runSettings(
@@ -157,7 +208,11 @@ async function runSettings(
   try {
     const result = await $.process.run(
       ['node', `${$.plugin.root}/helper/dist/index.js`],
-      { stdin: payload, timeoutMs: LIMITS.timeoutMs },
+      {
+        stdin: payload,
+        timeoutMs: LIMITS.settingsTimeoutMs,
+        env: { NODE_OPTIONS: '', NODE_PATH: '' },
+      },
     );
     return validateStorageResponse(result, request);
   } catch {
@@ -181,7 +236,11 @@ async function runTransfer(
   try {
     const result = await $.process.run(
       ['node', `${$.plugin.root}/helper/dist/index.js`],
-      { stdin: payload, timeoutMs: LIMITS.timeoutMs },
+      {
+        stdin: payload,
+        timeoutMs: LIMITS.settingsTimeoutMs,
+        env: { NODE_OPTIONS: '', NODE_PATH: '' },
+      },
     );
     return validateTransferResponse(result, request);
   } catch {
@@ -213,7 +272,8 @@ async function loadPersonal(
     },
     runtime,
   );
-  if (runtime.generation !== generation) return;
+  if (runtime.generation !== generation || !controller.requestedProtection)
+    return;
   if (response.ok) {
     settings.observe(response.settings);
     if (initial.scope !== 'session')
@@ -302,6 +362,7 @@ async function sanitizeSelectedTool<E extends ToolCallInput>(
   }
   const extraction = extractToolResult(e.tool, answer);
   if (extraction.status !== 'ok') {
+    record(slot.controller, { errorCode: 'UNSUPPORTED_SHAPE', count: 0 });
     slot.trusted = { deny: 'REDACTON_UNSUPPORTED_SHAPE' };
     return slot.trusted;
   }
@@ -311,6 +372,7 @@ async function sanitizeSelectedTool<E extends ToolCallInput>(
     slot.config,
   );
   if (!request) {
+    record(slot.controller, { errorCode: 'INPUT_LIMIT', count: 0 });
     slot.trusted = { deny: 'REDACTON_INPUT_LIMIT' };
     return slot.trusted;
   }
@@ -349,6 +411,10 @@ export function register(on: On) {
     settingsCode: '',
     generation: 0,
     personalPromise: null,
+    recoveryPromise: null,
+    checkPromise: null,
+    healthRevision: '',
+    healthEpoch: 0,
   };
   let config = new ConfigController();
   let form: RuleForm = freshForm();
@@ -366,8 +432,15 @@ export function register(on: On) {
     runtime.observedAt = null;
     runtime.generation += 1;
     runtime.personalPromise = null;
+    runtime.recoveryPromise = null;
+    runtime.checkPromise = null;
+    runtime.healthRevision = '';
+    runtime.healthEpoch += 1;
     runtime.personalLoad = 'pending';
     runtime.settingsCode = '';
+    const controller = state;
+    const owner = config;
+    const generation = runtime.generation;
     await $.command.register({
       name: 'redacton',
       description: 'Request local credential protection for new operations',
@@ -384,8 +457,10 @@ export function register(on: On) {
       description: 'Open local configuration, including during an active tool',
       immediate: true,
     });
-    await ensurePersonal($, state, config, settings, runtime);
-    await checkReadiness($, state, runtime, config.snapshot());
+    if (runtime.generation !== generation) return next(e);
+    await ensurePersonal($, controller, owner, settings, runtime);
+    if (runtime.generation === generation)
+      await checkReadiness($, controller, runtime, owner.snapshot());
     return next(e);
   }).catch((_$, e, next) => next(e));
 
@@ -397,6 +472,10 @@ export function register(on: On) {
     runtime.observedAt = null;
     runtime.generation += 1;
     runtime.personalPromise = null;
+    runtime.recoveryPromise = null;
+    runtime.checkPromise = null;
+    runtime.healthRevision = '';
+    runtime.healthEpoch += 1;
     runtime.personalLoad = 'pending';
     runtime.settingsCode = '';
     paneOpen = false;
@@ -408,7 +487,15 @@ export function register(on: On) {
 
   on('command.run', { command: 'redactoff' }, ($, e) => {
     if (e.args?.trim()) return { text: 'Redacton commands take no arguments.' };
+    if (!isExplicitLocalUser(e.origin))
+      return {
+        text: 'REDACTON_USER_ACTION_REQUIRED: Use /redactoff directly in the local terminal.',
+      };
     requestProtection(state, false);
+    runtime.generation += 1;
+    runtime.personalPromise = null;
+    runtime.recoveryPromise = null;
+    runtime.checkPromise = null;
     $.ui.invalidate('ui.render');
     return {
       text: 'Warning: Redacton is OFF. Credentials may reach Claude unchanged.',
@@ -419,16 +506,33 @@ export function register(on: On) {
     if (e.args?.trim()) return { text: 'Redacton commands take no arguments.' };
     requestProtection(state, true);
     $.ui.invalidate('ui.render');
-    await ensurePersonal($, state, config, settings, runtime);
-    await checkReadiness($, state, runtime, config.snapshot());
+    const controller = state;
+    const owner = config;
+    if (!runtime.recoveryPromise) {
+      if (runtime.personalLoad === 'failed') runtime.personalLoad = 'pending';
+      setReadiness(controller, 'loading');
+      const generation = runtime.generation;
+      const work = (async () => {
+        await ensurePersonal($, controller, owner, settings, runtime);
+        if (runtime.generation === generation && controller.requestedProtection)
+          await checkReadiness($, controller, runtime, owner.snapshot());
+      })();
+      runtime.recoveryPromise = work;
+      try {
+        await work;
+      } finally {
+        if (runtime.recoveryPromise === work) runtime.recoveryPromise = null;
+      }
+    } else await runtime.recoveryPromise;
     return {
-      text:
-        state.readiness === 'ready'
+      text: !state.requestedProtection
+        ? 'Redacton OFF. Recovery cancelled; no scanning helper is dispatched for OFF operations.'
+        : state.readiness === 'ready'
           ? 'Redacton ON. Protect ready. Partial coverage: supported prompt text, Read text, Bash stdout/stderr.'
-          : 'Redacton ON. Protection unavailable; selected content will be withheld.',
+          : `Redacton ON. Protection unavailable; selected content will be withheld. ${settingsRemediation(runtime.settingsCode)}`,
     };
   }).catch(() => ({
-    text: 'Redacton ON. Protection unavailable; selected content will be withheld.',
+    text: `Redacton ON. Protection unavailable; selected content will be withheld. ${settingsRemediation(runtime.settingsCode)}`,
   }));
 
   on(
@@ -450,9 +554,13 @@ export function register(on: On) {
       if (e.command === 'redact:status') {
         const view = statusView(state, config.snapshot(), runtime.observedAt);
         return {
-          text: `Redacton ${view.protection} · Protect ${view.readiness}. Saved settings: ${runtime.settingsCode || runtime.personalLoad}. Cached observation: ${view.observedAt === null ? 'not observed' : new Date(view.observedAt).toISOString()}. This is not a health check.\nConfiguration ${view.revision} · source ${view.source} · scope ${view.scope} · ${view.customRuleCount} custom rules: ${view.ruleIds.join(', ') || 'none'}.\nSupported: prompt text/context, Read text, Bash stdout/stderr. Excluded: other tools/MCP, tool arguments, binary/image/audio, PII, existing history. Zero findings does not mean safe content.\nRecent: ${view.recent.map((item) => `${item.code}:${item.count}`).join(', ') || 'none'}`,
+          text: `Redacton ${view.protection} · Protect ${view.readiness}. Saved settings: ${runtime.settingsCode || runtime.personalLoad}. Cached observation: ${view.observedAt === null ? 'not observed' : new Date(view.observedAt).toISOString()}. This is not a health check.\nConfiguration ${view.revision} · source ${view.source} · scope ${view.scope} · ${view.customRuleCount} custom rules: ${view.ruleIds.join(', ') || 'none'}.\nSupported: prompt text/context, Read text, Bash stdout/stderr. Excluded: Grep, Glob paths, WebFetch, Write arguments/effects, MCP and other tools; tool arguments, binary/image/audio, PII, existing history. Encoded/base64 credentials can be missed. Zero findings does not mean safe content.\nRecent: ${view.recent.map((item) => `${item.code}:${item.count}`).join(', ') || 'none'}`,
         };
       }
+      if (!isExplicitLocalUser(e.origin))
+        return {
+          text: 'REDACTON_USER_ACTION_REQUIRED: Open configuration directly in the local terminal.',
+        };
       imports.cancel();
       form = freshForm();
       form.mode =
@@ -553,6 +661,12 @@ export function register(on: On) {
             {!state.requestedProtection
               ? '⚠ Redacton OFF · credentials may reach Claude unchanged'
               : `Redacton ON · Protect ${state.readiness} · Partial coverage`}
+          </Text>
+          <Text>
+            Supported: prompt text/context, Read text, Bash stdout/stderr.
+            Unprotected: Grep, Glob paths, WebFetch, Write arguments/effects,
+            MCP, other tools and existing history. Encoded/base64 credentials
+            can be missed.
           </Text>
           <Text>{`Configuration ${active.revision} · ${active.source}/${active.scope} · custom rules ${active.rules.length}. Built-in credentials remain enabled. Zero findings is not a safety guarantee.`}</Text>
           <Text>
@@ -1498,24 +1612,35 @@ export function register(on: On) {
     )
       return { drop: 'REDACTON_LOCAL_COMMAND_UNAVAILABLE' };
     const controller = state;
+    const owner = config;
+    const generation = runtime.generation;
     const captured = snapshot(controller);
+    if (captured.requestedProtection && runtime.recoveryPromise)
+      return { drop: 'REDACTON_UNAVAILABLE' };
     if (captured.requestedProtection)
-      await ensurePersonal($, controller, config, settings, runtime);
-    const capturedConfig = config.snapshot();
+      await ensurePersonal($, controller, owner, settings, runtime);
+    if (runtime.generation !== generation || controller !== state)
+      return { drop: 'REDACTON_STALE_SESSION' };
+    const capturedConfig = owner.snapshot();
     if (!captured.requestedProtection) return next(e);
     if (captured.readiness === 'loading')
       await checkReadiness($, controller, runtime, capturedConfig);
     if (captured.readiness !== 'ready' && controller.readiness !== 'ready')
       return { drop: 'REDACTON_UNAVAILABLE' };
     const extraction = extractPrompt(e);
-    if (extraction.status !== 'ok')
+    if (extraction.status !== 'ok') {
+      record(controller, { errorCode: 'UNSUPPORTED_SHAPE', count: 0 });
       return { drop: 'REDACTON_UNSUPPORTED_SHAPE' };
+    }
     const request = makeRequest(
       `prompt-${++runtime.sequence}`,
       extraction.segments,
       capturedConfig,
     );
-    if (!request) return { drop: 'REDACTON_INPUT_LIMIT' };
+    if (!request) {
+      record(controller, { errorCode: 'INPUT_LIMIT', count: 0 });
+      return { drop: 'REDACTON_INPUT_LIMIT' };
+    }
     const response = await runHelper(
       $,
       controller,
@@ -1535,9 +1660,15 @@ export function register(on: On) {
   // Never trust next's returned envelope: a skipped inner hook can return original data.
   on('tool.call', { tool: ['Read', 'Bash'] }, async ($, e, next) => {
     const controller = state;
+    const owner = config;
+    const generation = runtime.generation;
     const captured = snapshot(controller);
+    if (captured.requestedProtection && runtime.recoveryPromise)
+      return { deny: 'REDACTON_UNAVAILABLE' };
     if (captured.requestedProtection)
-      await ensurePersonal($, controller, config, settings, runtime);
+      await ensurePersonal($, controller, owner, settings, runtime);
+    if (runtime.generation !== generation || controller !== state)
+      return { deny: 'REDACTON_STALE_SESSION' };
     const key = operationKey(e);
     if (key === null) return { deny: 'REDACTON_UNSUPPORTED_SHAPE' };
     if (slots.has(key)) return { deny: 'REDACTON_DUPLICATE_OPERATION' };
@@ -1545,7 +1676,7 @@ export function register(on: On) {
       return { deny: 'REDACTON_QUEUE_SATURATED' };
     const slot: OperationSlot = {
       captured,
-      config: config.snapshot(),
+      config: owner.snapshot(),
       controller,
       trusted: null,
     };
@@ -1582,11 +1713,13 @@ export function register(on: On) {
         : `Redacton ON · Protect ${state.readiness} · Selected content withheld`;
     const recent = state.recent[state.recent.length - 1];
     const metadata =
-      recent && state.requestedProtection && state.readiness === 'ready'
-        ? recent.count === 0
-          ? 'No recognized findings; partial coverage.'
-          : `Recognized credential findings: ${recent.count}`
-        : '';
+      recent && recent.errorCode !== 'SCANNED'
+        ? `Last operation withheld: ${recent.errorCode}`
+        : recent && state.requestedProtection && state.readiness === 'ready'
+          ? recent.count === 0
+            ? 'No recognized findings; partial coverage.'
+            : `Recognized credential findings: ${recent.count}`
+          : '';
     return (
       <Box>
         <Text>

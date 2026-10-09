@@ -133,9 +133,9 @@ try {
       initialCalls = Number(count[1]);
       phase = 1;
       send('/redactoff');
-    } else if (phase === 1 && fresh.includes('Warning: Redacton is OFF.')) {
+    } else if (phase === 1 && fresh.includes('REDACTON_USER_ACTION_REQUIRED')) {
       phase = 2;
-      send(`OFF ${synthetic}`);
+      send(`Protection must remain ON ${synthetic}`);
     } else if (phase === 2 && fresh.includes('SESSION_DONE')) {
       phase = 3;
       send('/helpercount');
@@ -167,8 +167,13 @@ try {
     requests: captures.length,
     initialHelperCalls: initialCalls,
     finalHelperCalls: finalCalls,
-    rawInOffModelUserContent: JSON.stringify(promptContent).includes(synthetic),
-    immediateOffWarning: output.includes('Warning: Redacton is OFF.'),
+    rawInProtectedModelUserContent:
+      JSON.stringify(promptContent).includes(synthetic),
+    sanitizedPlaceholderInModelUserContent:
+      JSON.stringify(promptContent).includes('<SECRET_1>'),
+    automationDisableDenied: output.includes('REDACTON_USER_ACTION_REQUIRED'),
+    offWarning: output.includes('Warning: Redacton is OFF.'),
+    authorityEvidence: 'sdk-denial-protection-retained',
     completed: output.includes('SESSION_DONE'),
     stderrPresent: Boolean(error),
   };
@@ -178,9 +183,11 @@ try {
     phase !== 4 ||
     captures.length !== 1 ||
     initialCalls !== 2 ||
-    finalCalls !== initialCalls ||
-    !report.rawInOffModelUserContent ||
-    !report.immediateOffWarning ||
+    finalCalls !== initialCalls + 1 ||
+    report.rawInProtectedModelUserContent ||
+    !report.sanitizedPlaceholderInModelUserContent ||
+    !report.automationDisableDenied ||
+    report.offWarning ||
     !report.completed
   )
     process.exitCode = 1;

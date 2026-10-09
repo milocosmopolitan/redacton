@@ -1,16 +1,20 @@
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { type BigIntStats, constants } from 'node:fs';
 import {
   link,
   lstat,
   mkdir,
   open,
+  readFile,
+  readlink,
   realpath,
   rename,
   unlink,
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { homedir, hostname } from 'node:os';
+import { dirname, isAbsolute, join } from 'node:path';
+import { promisify } from 'node:util';
 import type { ConfigDocument } from './config.js';
 import { validateConfigDocument } from './config.js';
 import type { Engine } from './core.js';
@@ -111,6 +115,100 @@ export async function pathSnapshotMatches(
   }
 }
 
+type LeaseOwner = Readonly<{
+  version: 2;
+  pid: number;
+  nonce: string;
+  host: string;
+  start: string;
+}>;
+const execute = promisify(execFile);
+let selfStart: Promise<string | null> | undefined;
+
+// These are ownership metadata, never input/rule fingerprints or diagnostics.
+async function hostIdentity(): Promise<string> {
+  let namespace = `${process.platform}:${hostname()}`;
+  if (process.platform === 'linux') {
+    namespace += `:${await readFile('/proc/sys/kernel/random/boot_id', 'utf8')}:${await readlink('/proc/self/ns/pid')}`;
+  }
+  return createHash('sha256').update(namespace).digest('hex');
+}
+export function procfsProcessStart(
+  value: string,
+  expectedPid: number,
+): string | null {
+  const opening = value.indexOf(' (');
+  const closing = value.lastIndexOf(') ');
+  if (
+    !Number.isSafeInteger(expectedPid) ||
+    expectedPid < 1 ||
+    opening < 1 ||
+    closing <= opening ||
+    value.slice(0, opening) !== String(expectedPid)
+  )
+    return null;
+  // comm can contain spaces and parentheses; fields begin after its final close.
+  const start = value.slice(closing + 2).split(' ')[19];
+  return start && /^[0-9]+$/.test(start) ? start : null;
+}
+async function processStart(pid: number): Promise<string | null> {
+  if (process.platform === 'linux') {
+    try {
+      const self = await readFile('/proc/self/stat', 'utf8');
+      const selfIdentity = procfsProcessStart(self, process.pid);
+      // A host-mounted procfs can expose another PID numbering scheme. Never
+      // treat unrelated process metadata as evidence that a live owner died.
+      if (selfIdentity === null) return null;
+      if (pid === process.pid) return selfIdentity;
+      return procfsProcessStart(
+        await readFile(`/proc/${pid}/stat`, 'utf8'),
+        pid,
+      );
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const result =
+      process.platform === 'darwin'
+        ? await execute('/bin/ps', ['-p', String(pid), '-o', 'lstart='], {
+            timeout: 500,
+            maxBuffer: 1024,
+            env: { LC_ALL: 'C', TZ: 'UTC' },
+          })
+        : process.platform === 'win32' && process.env.SystemRoot
+          ? await execute(
+              join(
+                process.env.SystemRoot,
+                'System32',
+                'WindowsPowerShell',
+                'v1.0',
+                'powershell.exe',
+              ),
+              [
+                '-NoLogo',
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                `[System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().Ticks`,
+              ],
+              {
+                timeout: 3000,
+                maxBuffer: 1024,
+                windowsHide: true,
+                env: { SystemRoot: process.env.SystemRoot },
+              },
+            )
+          : null;
+    const start = result?.stdout.trim();
+    if (process.platform === 'win32' && !/^[0-9]{1,20}$/.test(start ?? ''))
+      return null;
+    return start && start.length <= 128 ? start : null;
+  } catch {
+    return null;
+  }
+}
+
 // State and rule bodies are written only here, never to logs, arguments or model context.
 export class SettingsStore {
   constructor(
@@ -120,7 +218,12 @@ export class SettingsStore {
   private async directory(path: string): Promise<void> {
     await mkdir(path, { recursive: true, mode: 0o700 });
     const stat = await lstat(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      (process.platform !== 'win32' &&
+        ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()))
+    )
       fail('SETTINGS_UNAVAILABLE');
   }
   private async readBounded(
@@ -405,46 +508,72 @@ export class SettingsStore {
     });
   }
 
-  private owner(value: unknown): { pid: number; nonce: string } {
+  private owner(value: unknown): LeaseOwner {
     if (
-      !fields(value, ['pid', 'nonce']) ||
+      !fields(value, ['version', 'pid', 'nonce', 'host', 'start']) ||
+      value.version !== 2 ||
       typeof value.pid !== 'number' ||
       !Number.isSafeInteger(value.pid) ||
       value.pid < 1 ||
       typeof value.nonce !== 'string' ||
-      !/^[0-9a-f-]{36}$/.test(value.nonce)
+      !/^[0-9a-f-]{36}$/.test(value.nonce) ||
+      typeof value.host !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(value.host) ||
+      typeof value.start !== 'string' ||
+      !value.start ||
+      value.start.length > 128
     )
       fail('SETTINGS_BUSY');
-    return { pid: value.pid, nonce: value.nonce };
+    return value as unknown as LeaseOwner;
   }
-  private async leaseOwner(
-    path: string,
-  ): Promise<{ pid: number; nonce: string }> {
+  private async leaseOwner(path: string): Promise<LeaseOwner> {
     try {
-      return this.owner(JSON.parse(await this.readBounded(path, 256, true)));
+      return this.owner(JSON.parse(await this.readBounded(path, 1024, true)));
     } catch {
-      // A lease can turn over during inspection. Unknown ownership stays busy;
-      // never unlink it or confuse lock contention with corrupt settings content.
       fail('SETTINGS_BUSY');
     }
   }
-  private dead(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (error) {
-      if (code(error) === 'ESRCH') return true;
-      throw error;
-    }
+  private async ownLease(nonce: string): Promise<LeaseOwner> {
+    selfStart ??= processStart(process.pid);
+    const observation = selfStart;
+    const start = await observation;
+    if (start === null && selfStart === observation) selfStart = undefined;
+    if (!start) fail('SETTINGS_UNAVAILABLE');
+    return {
+      version: 2,
+      pid: process.pid,
+      nonce,
+      host: await hostIdentity(),
+      start,
+    };
   }
-  private async acquire(directory: string): Promise<string> {
-    const lock = join(directory, '.settings.lock');
-    const nonce = randomUUID();
-    const candidate = join(directory, `.lock-${nonce}.tmp`);
+  private async abandoned(owner: LeaseOwner): Promise<boolean> {
+    if (owner.host !== (await hostIdentity())) return false;
+    try {
+      process.kill(owner.pid, 0);
+    } catch (error) {
+      // EPERM and unavailable identity are indeterminate, never proof of death.
+      return code(error) === 'ESRCH';
+    }
+    const start = await processStart(owner.pid);
+    return start !== null && start !== owner.start;
+  }
+  private sameOwner(left: LeaseOwner, right: LeaseOwner): boolean {
+    return (
+      left.pid === right.pid &&
+      left.nonce === right.nonce &&
+      left.host === right.host &&
+      left.start === right.start
+    );
+  }
+  private async acquirePath(lock: string, depth = 0): Promise<LeaseOwner> {
+    if (depth > 4) fail('SETTINGS_BUSY');
+    const owner = await this.ownLease(randomUUID());
+    const candidate = `${lock}.${owner.nonce}.tmp`;
     try {
       const handle = await open(candidate, 'wx', 0o600);
       try {
-        await handle.writeFile(JSON.stringify({ pid: process.pid, nonce }));
+        await handle.writeFile(JSON.stringify(owner));
         await handle.sync();
       } finally {
         await handle.close();
@@ -452,33 +581,23 @@ export class SettingsStore {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           await link(candidate, lock);
-          return nonce;
+          return owner;
         } catch (error) {
           if (code(error) !== 'EEXIST') throw error;
         }
         const old = await this.leaseOwner(lock);
-        if (!this.dead(old.pid)) fail('SETTINGS_BUSY');
-        const recovery = join(directory, `.recover-${old.nonce}`);
-        let claimed = false;
+        if (!(await this.abandoned(old))) fail('SETTINGS_BUSY');
+        // A crashed claimant is itself a recoverable lease. Bound recursion so
+        // adversarial debris cannot create unbounded work or unsafe deletion.
+        const recovery = join(dirname(lock), `.recover-${old.nonce}`);
+        const claim = await this.acquirePath(recovery, depth + 1);
         try {
-          try {
-            const claim = await open(recovery, 'wx', 0o600);
-            claimed = true;
-            await claim.close();
-          } catch (error) {
-            if (code(error) === 'EEXIST') fail('SETTINGS_BUSY');
-            throw error;
-          }
           const current = await this.leaseOwner(lock);
-          if (
-            current.nonce !== old.nonce ||
-            current.pid !== old.pid ||
-            !this.dead(current.pid)
-          )
+          if (!this.sameOwner(current, old) || !(await this.abandoned(current)))
             fail('SETTINGS_BUSY');
           await unlink(lock);
         } finally {
-          if (claimed) await unlink(recovery).catch(() => {});
+          await this.releasePath(recovery, claim);
         }
       }
       fail('SETTINGS_BUSY');
@@ -486,11 +605,9 @@ export class SettingsStore {
       await unlink(candidate).catch(() => {});
     }
   }
-  private async release(directory: string, nonce: string): Promise<void> {
-    const lock = join(directory, '.settings.lock');
+  private async releasePath(lock: string, owner: LeaseOwner): Promise<void> {
     try {
-      const owner = await this.leaseOwner(lock);
-      if (owner.nonce === nonce && owner.pid === process.pid)
+      if (this.sameOwner(await this.leaseOwner(lock), owner))
         await unlink(lock);
     } catch {
       /* An unrelated or unreadable lease stays closed. */
@@ -512,10 +629,12 @@ export class SettingsStore {
     const location = await this.location(scope, projectRoot);
     if (location.identity !== expected.identity) fail('SETTINGS_CONFLICT');
     await this.directory(location.directory);
-    let lease: string | undefined;
+    let lease: LeaseOwner | undefined;
     let temporary: string | undefined;
     try {
-      lease = await this.acquire(location.directory);
+      lease = await this.acquirePath(
+        join(location.directory, '.settings.lock'),
+      );
       const current = await this.read(scope, location, engine, canonical);
       if (
         current.revision !== expected.revision ||
@@ -550,7 +669,11 @@ export class SettingsStore {
       return settings;
     } finally {
       if (temporary) await unlink(temporary).catch(() => {});
-      if (lease) await this.release(location.directory, lease);
+      if (lease)
+        await this.releasePath(
+          join(location.directory, '.settings.lock'),
+          lease,
+        );
     }
   }
 }

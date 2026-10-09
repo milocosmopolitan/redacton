@@ -70,6 +70,8 @@ const emptyBashFields = [
   'ghRateLimitHint',
   'gitOperation',
   'bashEditDiff',
+  'rawOutputPath',
+  'structuredContent',
 ];
 const safeOriginKinds = new Set([
   'composer',

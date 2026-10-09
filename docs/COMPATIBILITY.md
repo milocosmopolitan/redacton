@@ -48,3 +48,29 @@ Version 0.1.0 release assets [QUALIFICATION.json](https://github.com/milocosmopo
 The original [single-layer failure](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/host-spike/REPORT.md) and [layered follow-up](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/layered-spike/REPORT.md) remain available at the tag. Current design rationale is in [layered-guard decision](decisions/layered-trusted-results.md).
 
 Independent adoption remains unmeasured. [Issue #28](https://github.com/milocosmopolitan/redacton/issues/28) tracks three independent installations and seven-day follow-up; agents, downloads and CI do not count.
+
+## Recoverability and authority remediation candidate
+
+Current source was evaluated on macOS ARM64, Node 22.16.0 with installed/generated
+Claude Code 2.1.294, 2.1.295 and the exact current candidate 2.1.296. These are scoped
+synthetic schema/model-delivery evaluations, not a new supported version range or
+release. All three declared the two proposed Bash aliases, but the actual small
+foreground results omitted them; the reported 2.1.295 regression was not reproduced.
+See [exact Bash schema observations](BASH-HOSTS.md).
+
+Current same-session recovery has six actual 2.1.295 prompt scenarios plus
+separate deterministic concurrency, configuration and generation regressions.
+Scanner refusals have a closed event/scanner failure taxonomy; unknown replies
+and systemic failures cannot silently become ready. SDK/plugin/bridge command
+origins cannot disable protection or open mutation forms. Actual terminal OFF
+and automation-denial evidence are distinct. See [recovery](RECOVERY.md),
+[authority and Cowork NO-GO](HOST-AUTHORITY.md), [measurements](BUDGETS.md),
+[storage/environment boundaries](STORAGE-ENVIRONMENT.md) and [unprotected routes](COVERAGE.md).
+
+Cowork remains **unsupported and activation-unverified**. The tested Grep, Glob,
+Write and MCP routes remain unprotected; the refused loopback WebFetch probe does
+not qualify successful page delivery. Windows/Linux CI package and measurement
+results never replace each platform's actual Mod/model/terminal qualification.
+No historical release, support claim or exact-commit evidence row is rewritten
+by this remediation. The exact packaged final regression identity belongs in its
+PR/evidence record, separately from historical release matrices.

@@ -19,6 +19,7 @@ import * as engine from '@redact-secret/core';
 import { CANONICAL_TYPES, POLICY_ID } from '../helper/dist/core.js';
 import {
   pathSnapshotMatches,
+  procfsProcessStart,
   SettingsStore,
   sameFileIdentity,
 } from '../helper/dist/storage.js';
@@ -373,6 +374,7 @@ test('concurrent writers have one winner; active locks block safely and dead own
     await writeFile(
       lock,
       JSON.stringify({
+        ...(await store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
         pid: dead.pid,
         nonce: '22222222-2222-4222-8222-222222222222',
       }),
@@ -573,8 +575,19 @@ test('multiple real processes contending to recover one dead lease retain exactl
     await writeFile(
       join(root, 'personal/.settings.lock'),
       JSON.stringify({
+        ...(await store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
         pid: dead.pid,
         nonce: '33333333-3333-4333-8333-333333333333',
+      }),
+    );
+    const original = JSON.parse(
+      await readFile(join(root, 'personal/.settings.lock'), 'utf8'),
+    );
+    await writeFile(
+      join(root, `personal/.recover-${original.nonce}`),
+      JSON.stringify({
+        ...original,
+        nonce: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       }),
     );
     const input = JSON.stringify({
@@ -836,6 +849,7 @@ test('a lease replaced while inspecting its dead owner stays closed and preserve
     await writeFile(
       lock,
       JSON.stringify({
+        ...(await store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
         pid: dead.pid,
         nonce: '44444444-4444-4444-8444-444444444444',
       }),
@@ -865,3 +879,207 @@ test('a lease replaced while inspecting its dead owner stays closed and preserve
     assert.deepEqual(JSON.parse(await readFile(lock, 'utf8')), live);
     assert.deepEqual(await load(store), initial);
   }));
+
+test('PID reuse reclaims only a verified different process start, never a matching live writer', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const lock = join(root, 'personal/.settings.lock');
+    const owner = await store.ownLease('66666666-6666-4666-8666-666666666666');
+    await writeFile(lock, JSON.stringify(owner));
+    await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+    assert.deepEqual(JSON.parse(await readFile(lock, 'utf8')), owner);
+    await writeFile(
+      lock,
+      JSON.stringify({ ...owner, start: 'abandoned-start' }),
+    );
+    assert.deepEqual((await save(store, initial)).document, document);
+  }));
+
+test('EPERM, shared namespace mismatch and legacy unknown ownership preserve the lease', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const lock = join(root, 'personal/.settings.lock');
+    const owner = await store.ownLease('77777777-7777-4777-8777-777777777777');
+    const kill = process.kill;
+    await writeFile(lock, JSON.stringify(owner));
+    process.kill = () => {
+      throw Object.assign(new Error('synthetic'), { code: 'EPERM' });
+    };
+    try {
+      await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+    } finally {
+      process.kill = kill;
+    }
+    for (const value of [
+      { ...owner, host: 'f'.repeat(64) },
+      { pid: owner.pid, nonce: owner.nonce },
+    ]) {
+      await writeFile(lock, JSON.stringify(value));
+      await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+      assert.deepEqual(JSON.parse(await readFile(lock, 'utf8')), value);
+    }
+    // Explicit recovery uses a new private namespace, without deleting old data.
+    const recovered = new SettingsStore(join(root, 'recovered'));
+    assert.equal(
+      (await save(recovered, await load(recovered))).document.rules.length,
+      1,
+    );
+    assert.deepEqual(await load(store), initial);
+  }));
+
+test('a genuinely abandoned recovery claimant recovers within bounded arbitration', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const lock = join(root, 'personal/.settings.lock');
+    const dead = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+    const old = {
+      ...(await store.ownLease('88888888-8888-4888-8888-888888888888')),
+      pid: dead.pid,
+    };
+    const claim = { ...old, nonce: '99999999-9999-4999-8999-999999999999' };
+    await writeFile(lock, JSON.stringify(old));
+    await writeFile(
+      join(root, `personal/.recover-${old.nonce}`),
+      JSON.stringify(claim),
+    );
+    assert.deepEqual((await save(store, initial)).document, document);
+    assert.deepEqual((await readdir(join(root, 'personal'))).sort(), [
+      '.identity',
+      'settings.json',
+    ]);
+  }));
+
+test('relative and empty personal settings roots fail with fixed errors; shared Unix directory permissions are refused', async () => {
+  for (const root of ['', 'relative-settings']) {
+    await assert.rejects(load(new SettingsStore(root)), {
+      message: 'INVALID_REQUEST',
+    });
+  }
+  if (process.platform === 'win32') return;
+  await fixture(async (root, store) => {
+    await load(store);
+    await fs.chmod(join(root, 'personal'), 0o755);
+    await assert.rejects(load(store), { message: 'SETTINGS_UNAVAILABLE' });
+  });
+});
+
+test('deep crashed claimant chains stay busy without deleting indeterminate leases', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const base = await store.ownLease('00000000-0000-4000-8000-000000000000');
+    let path = join(root, 'personal/.settings.lock');
+    for (let depth = 0; depth < 6; depth++) {
+      const owner = {
+        ...base,
+        start: 'abandoned-start',
+        nonce: `${String(depth).padStart(8, '0')}-0000-4000-8000-000000000000`,
+      };
+      await writeFile(path, JSON.stringify(owner));
+      path = join(root, `personal/.recover-${owner.nonce}`);
+    }
+    const before = (await readdir(join(root, 'personal'))).sort();
+    await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+    assert.deepEqual((await readdir(join(root, 'personal'))).sort(), before);
+    assert.deepEqual(await load(store), initial);
+  }));
+
+test('macOS lease process starts use a stable UTC identity across parent timezone environments', {
+  skip: process.platform !== 'darwin',
+}, () => {
+  const code = `import {SettingsStore} from './helper/dist/storage.js';const owner=await new SettingsStore().ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');console.log(JSON.stringify({start:owner.start,pid:owner.pid}));`;
+  const probes = [];
+  // Probe this same live parent PID through distinct parent TZ environments.
+  const source = `import {execFileSync} from 'node:child_process';const p=JSON.parse(process.env.FIXTURE_PID);console.log(JSON.stringify(execFileSync('/bin/ps',['-p',String(p),'-o','lstart='],{encoding:'utf8',env:{LC_ALL:'C',TZ:'UTC'}}).trim()));`;
+  for (const TZ of ['UTC', 'America/New_York']) {
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', source],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_OPTIONS: '',
+          NODE_PATH: '',
+          TZ,
+          FIXTURE_PID: String(process.pid),
+        },
+      },
+    );
+    assert.equal(result.status, 0);
+    probes.push(JSON.parse(result.stdout));
+  }
+  assert.equal(probes[0], probes[1]);
+  // Actual ownLease must match the UTC ps observation for each child's own PID.
+  for (const TZ of ['UTC', 'America/New_York']) {
+    const check = code.replace(
+      'console.log(JSON.stringify({start:owner.start,pid:owner.pid}));',
+      `const {execFileSync}=await import('node:child_process');const utc=execFileSync('/bin/ps',['-p',String(process.pid),'-o','lstart='],{encoding:'utf8',env:{LC_ALL:'C',TZ:'UTC'}}).trim();console.log(JSON.stringify({same:owner.start===utc}));`,
+    );
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', check],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '', TZ },
+      },
+    );
+    assert.equal(result.status, 0);
+    assert.equal(JSON.parse(result.stdout).same, true);
+  }
+});
+
+test('procfs ownership parses exact PID/start despite spaces and parentheses in process names', () => {
+  const fields = ['S', ...Array(18).fill('0'), '123456', '0'];
+  const value = `42 (synthetic ) worker (name)) ${fields.join(' ')}`;
+  assert.equal(procfsProcessStart(value, 42), '123456');
+  assert.equal(procfsProcessStart(value, 7), null);
+  assert.equal(procfsProcessStart(value, 0), null);
+  assert.equal(procfsProcessStart(value, 42.5), null);
+  assert.equal(procfsProcessStart('42 synthetic 123456', 42), null);
+  assert.equal(procfsProcessStart('42 (worker) S 0', 42), null);
+  assert.equal(
+    procfsProcessStart(value.replace('123456', 'unknown-start'), 42),
+    null,
+  );
+});
+
+test('Windows identity observations avoid cmdlet autoload, coalesce in flight, retry transient failure and cache success', () => {
+  const source = `import cp from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {promisify} from 'node:util';
+Object.defineProperty(process,'platform',{value:'win32'});
+process.env.SystemRoot='SYNTHETIC_WINDOWS_ROOT';
+let calls=0;let release;const observations=[];
+const fake=()=>{};
+fake[promisify.custom]=async(_file,args,options)=>{
+ calls++;observations.push({bounded:options.timeout===3000,noProfile:args.includes('-NoProfile'),noLogo:args.includes('-NoLogo'),direct:args.at(-1).includes('[System.Diagnostics.Process]::GetProcessById(')&&!args.at(-1).includes('Get-Process')});
+ if(calls===1){await new Promise(resolve=>release=resolve);return {stdout:'unknown-start'};}
+ return {stdout:'638900000000000000'};
+};
+cp.execFile=fake;syncBuiltinESMExports();
+const {SettingsStore}=await import('./helper/dist/storage.js');const store=new SettingsStore();
+const first=store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+const second=store.ownLease('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+release();const failures=await Promise.allSettled([first,second]);
+const recovered=await store.ownLease('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+const cached=await store.ownLease('dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+console.log(JSON.stringify({calls,failures:failures.every(row=>row.status==='rejected'&&row.reason.message==='SETTINGS_UNAVAILABLE'),sameStart:recovered.start===cached.start,observations}));`;
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e', source],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' },
+    },
+  );
+  assert.equal(result.status, 0);
+  const value = JSON.parse(result.stdout);
+  assert.equal(value.calls, 2);
+  assert.equal(value.failures, true);
+  assert.equal(value.sameStart, true);
+  assert.ok(
+    value.observations.every(
+      (row) => row.bounded && row.noProfile && row.noLogo && row.direct,
+    ),
+  );
+});

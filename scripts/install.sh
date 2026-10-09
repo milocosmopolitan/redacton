@@ -138,5 +138,7 @@ fi
 mv "$staging/redacton-$release" "$install_dir/current" || fail 'Installation failed. Your previous installation will be restored.'
 if [ -n "$previous" ]; then rm -rf "$previous"; fi
 previous=''
-printf '%s\n' 'Redacton is installed. Start Claude Code with:'
+printf '%s\n' 'Redacton files installed; helper self-check passed. Protection is INACTIVE until the Mod loads.'
+printf '%s\n' 'Start Claude Code CLI below, then run /redacton and confirm Protect ready.'
+printf '%s\n' 'Cowork/Desktop activation is unqualified. Installation does not establish host support.'
 printf 'claude --plugin-dir %q\n' "$install_dir/current"

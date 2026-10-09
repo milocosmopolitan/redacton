@@ -33,6 +33,13 @@ const errorCodes = new Set([
   'HELPER_UNAVAILABLE',
   'CANCELLED',
   'QUEUE_LIMIT',
+  'QUEUE_SATURATED',
+  'RULE_BLOCKED',
+  'INVALID_CONFIG',
+  'NAMES_ACTION_CONFLICT',
+  'INVALID_JSON',
+  'INPUT_FAILURE',
+  'INVALID_HELPER_RESPONSE',
 ]);
 
 export function createSessionState(sessionId: string): SessionState {
