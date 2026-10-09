@@ -448,7 +448,11 @@ try {
   console.log(JSON.stringify(failure));
   process.exitCode = 1;
 } finally {
-  if (load && load.exitCode === null && load.signalCode === null) {
+  if (
+    load?.pid !== undefined &&
+    load.exitCode === null &&
+    load.signalCode === null
+  ) {
     const closed = new Promise((resolveExit) =>
       load.once('close', resolveExit),
     );
