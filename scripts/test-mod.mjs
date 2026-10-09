@@ -69,7 +69,7 @@ try {
       process.env.CLAUDE_BINARY ?? 'claude',
       [
         '-p',
-        '/redactoff',
+        '/redacton',
         '--plugin-dir',
         destination,
         '--setting-sources',
@@ -82,10 +82,7 @@ try {
       ],
       { cwd: destination, env, encoding: 'utf8', timeout: 30000 },
     );
-    if (
-      generated.status !== 0 ||
-      !generated.stdout?.includes('Warning: Redacton is OFF.')
-    )
+    if (generated.status !== 0 || !generated.stdout?.includes('Redacton ON.'))
       throw new Error('SDK_HOST_ACTIVATION_FAILED');
     try {
       await access(

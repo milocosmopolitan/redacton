@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added coalesced same-session settings/scanner recovery through `/redacton`, preserving approved configuration and rejecting stale readiness writes.
+- Kept selected event limits, policy blocking, cancellation and queue refusal local to the event; systemic helper/engine/protocol failures require a successful bounded self-check.
+- Required local composer authority for disabling protection and opening configuration; made inactive command stubs and installer messages explicit about absent interception and unsupported Cowork.
+- Added narrow empty Bash alias handling, installed-version SDK generation for interactive-only hosts, synthetic host-shape and unprotected-route audits.
+- Bound settings leases and recovery claims to host/namespace, process start and nonce; indeterminate ownership stays busy. Cleared inherited Node startup overrides without claiming a clean child environment.
 - Defined macOS/Linux/native Windows/WSL CLI target identities and conservative Node 22/24 floors, with historical verified scope and unqualified rows kept explicit.
 - Added portable prebuilt WASM candidate tar/ZIP artifacts, pure Node archive tooling, checksums/provenance and adversarial archive checks.
 - Added candidate Unix and native PowerShell installers that stage and self-check before replacing an existing installation.

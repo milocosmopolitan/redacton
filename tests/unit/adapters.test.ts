@@ -82,6 +82,8 @@ test('model-origin Bash undefined optional fields are stripped; populated aliase
     backgroundTaskId: undefined,
     bashEditDiff: undefined,
     returnCodeInterpretation: undefined,
+    rawOutputPath: undefined,
+    structuredContent: undefined,
   };
   const extracted = extractToolResult('Bash', {
     result: ordinary,
@@ -98,6 +100,8 @@ test('model-origin Bash undefined optional fields are stripped; populated aliase
     'backgroundTaskId',
     'bashEditDiff',
     'returnCodeInterpretation',
+    'rawOutputPath',
+    'structuredContent',
   ]) {
     assert.equal(
       extractToolResult('Bash', {
@@ -109,6 +113,36 @@ test('model-origin Bash undefined optional fields are stripped; populated aliase
   assert.equal(
     extractToolResult('Bash', {
       result: { ...ordinary, unknownAlias: undefined },
+    }).status,
+    'blocked',
+  );
+});
+
+test('Bash known aliases accept only absent or undefined data properties', () => {
+  const result = { stdout: 'synthetic', stderr: '', interrupted: false };
+  for (const field of ['rawOutputPath', 'structuredContent']) {
+    for (const value of ['', null, [], {}, ['synthetic alias'], '/synthetic']) {
+      assert.equal(
+        extractToolResult('Bash', {
+          result: { ...result, [field]: value },
+        }).status,
+        'blocked',
+      );
+    }
+    const accessor = Object.defineProperty({ ...result }, field, {
+      enumerable: true,
+      get() {
+        throw new Error('must not read alias');
+      },
+    });
+    assert.equal(
+      extractToolResult('Bash', { result: accessor }).status,
+      'blocked',
+    );
+  }
+  assert.equal(
+    extractToolResult('Bash', {
+      result: { ...result, [Symbol('synthetic')]: undefined },
     }).status,
     'blocked',
   );

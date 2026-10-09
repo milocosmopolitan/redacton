@@ -554,7 +554,7 @@ export function register(on: On) {
       if (e.command === 'redact:status') {
         const view = statusView(state, config.snapshot(), runtime.observedAt);
         return {
-          text: `Redacton ${view.protection} · Protect ${view.readiness}. Saved settings: ${runtime.settingsCode || runtime.personalLoad}. Cached observation: ${view.observedAt === null ? 'not observed' : new Date(view.observedAt).toISOString()}. This is not a health check.\nConfiguration ${view.revision} · source ${view.source} · scope ${view.scope} · ${view.customRuleCount} custom rules: ${view.ruleIds.join(', ') || 'none'}.\nSupported: prompt text/context, Read text, Bash stdout/stderr. Excluded: other tools/MCP, tool arguments, binary/image/audio, PII, existing history. Zero findings does not mean safe content.\nRecent: ${view.recent.map((item) => `${item.code}:${item.count}`).join(', ') || 'none'}`,
+          text: `Redacton ${view.protection} · Protect ${view.readiness}. Saved settings: ${runtime.settingsCode || runtime.personalLoad}. Cached observation: ${view.observedAt === null ? 'not observed' : new Date(view.observedAt).toISOString()}. This is not a health check.\nConfiguration ${view.revision} · source ${view.source} · scope ${view.scope} · ${view.customRuleCount} custom rules: ${view.ruleIds.join(', ') || 'none'}.\nSupported: prompt text/context, Read text, Bash stdout/stderr. Excluded: Grep, Glob paths, WebFetch, Write arguments/effects, MCP and other tools; tool arguments, binary/image/audio, PII, existing history. Encoded/base64 credentials can be missed. Zero findings does not mean safe content.\nRecent: ${view.recent.map((item) => `${item.code}:${item.count}`).join(', ') || 'none'}`,
         };
       }
       if (!isExplicitLocalUser(e.origin))
@@ -661,6 +661,12 @@ export function register(on: On) {
             {!state.requestedProtection
               ? '⚠ Redacton OFF · credentials may reach Claude unchanged'
               : `Redacton ON · Protect ${state.readiness} · Partial coverage`}
+          </Text>
+          <Text>
+            Supported: prompt text/context, Read text, Bash stdout/stderr.
+            Unprotected: Grep, Glob paths, WebFetch, Write arguments/effects,
+            MCP, other tools and existing history. Encoded/base64 credentials
+            can be missed.
           </Text>
           <Text>{`Configuration ${active.revision} · ${active.source}/${active.scope} · custom rules ${active.rules.length}. Built-in credentials remain enabled. Zero findings is not a safety guarantee.`}</Text>
           <Text>
