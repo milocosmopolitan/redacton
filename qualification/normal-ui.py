@@ -240,9 +240,9 @@ def control_geometry(label):
     return {'row': cells[0][0], 'column': cells[0][1], 'endRow': cells[-1][0], 'endColumn': cells[-1][1], 'characters': len(cells), 'reverse': sum(bool(cell.reverse) for cell in styles), 'bold': sum(bool(cell.bold) for cell in styles), 'colored': sum(cell.fg != 'default' for cell in styles)}
 
 def input_active(label):
-    # All form labels can paint before the host activates the intended input.
+    # The pinned renderer bolds the active input; ConPTY can park a hidden cursor elsewhere.
     geometry = control_geometry(label)
-    return bool(geometry and geometry['bold'] == geometry['characters'] and geometry['row'] <= screen.cursor.y <= geometry['endRow'] and screen.cursor.x > geometry['endColumn'])
+    return bool(geometry and geometry['bold'] == geometry['characters'])
 
 def off_frame(phase):
     if len(off_frames) >= 8:
