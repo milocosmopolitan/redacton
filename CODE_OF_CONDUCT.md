@@ -20,7 +20,7 @@ For a non-sensitive moderation concern, contact the [maintainer](https://github.
 
 The project currently has no published private conduct-reporting channel. Maintainers must configure one and update this document before a public release. Do not treat an ordinary issue as confidential.
 
-Security vulnerabilities belong in a configured private security-reporting channel, not a public conduct discussion.
+Report security vulnerabilities through the enabled [GitHub private vulnerability reporting channel](https://github.com/milocosmopolitan/redacton/security/advisories/new), following [SECURITY.md](SECURITY.md). Do not put vulnerability details in a public conduct discussion.
 
 ## Enforcement
 
