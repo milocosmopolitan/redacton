@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readTar } from './artifact-archive.mjs';
 import { requiredGates } from './qualification-evidence.mjs';
+import { terminalUiDiagnostics } from './terminal-ui-evidence.mjs';
 
 const sha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
 if (sha.status !== 0 || !/^[a-f0-9]{40}\s*$/.test(sha.stdout))
@@ -43,6 +44,9 @@ function run(gate, script, ...args) {
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     },
   });
+  if (gate === 'terminal-ui')
+    for (const diagnostic of terminalUiDiagnostics(result.stdout ?? ''))
+      console.log(JSON.stringify(diagnostic));
   gates[gate] =
     result.status === 0 && !result.error
       ? 'passed'

@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { terminalUiChecks } from './terminal-ui-evidence.mjs';
 
 if (!['darwin', 'linux'].includes(process.platform))
   throw new Error('TERMINAL_UI_PLATFORM_UNAVAILABLE');
@@ -16,8 +17,16 @@ function run(args, env = process.env, inspectReport = false) {
     maxBuffer: 1024 * 1024,
     env,
   });
-  if (!inspectReport && (result.status !== 0 || result.error))
-    throw new Error('TERMINAL_UI_CHECK_FAILED');
+  if (!inspectReport && (result.status !== 0 || result.error)) {
+    const unavailable =
+      result.error?.code === 'ENOENT' ||
+      /No module named pip/.test(result.stderr ?? '');
+    throw new Error(
+      unavailable
+        ? 'TERMINAL_UI_PREREQUISITE_UNAVAILABLE'
+        : 'TERMINAL_UI_BOOTSTRAP_FAILED',
+    );
+  }
   return result;
 }
 try {
@@ -34,6 +43,7 @@ try {
     '-r',
     resolve('qualification/ui-requirements.txt'),
   ]);
+  let failed = false;
   for (const columns of [140, 80]) {
     const report = join(temporary, `${columns}.json`);
     const execution = run(
@@ -55,30 +65,28 @@ try {
       },
       true,
     );
-    const value = JSON.parse(await readFile(report, 'utf8'));
+    let value;
+    try {
+      const bytes = await readFile(report);
+      if (bytes.length > 1024 * 1024) throw new Error('REPORT_LIMIT');
+      value = JSON.parse(bytes);
+      if (!value || typeof value.result !== 'object' || !value.result)
+        throw new Error('REPORT_INVALID');
+    } catch {
+      console.log(
+        JSON.stringify({
+          code: 'TERMINAL_UI_ROW',
+          columns,
+          completed: false,
+          missing: terminalUiChecks,
+        }),
+      );
+      console.log(JSON.stringify({ code: 'TERMINAL_UI_REPORT_INVALID' }));
+      failed = true;
+      continue;
+    }
     const result = value.result;
-    const required = [
-      'completed',
-      'previewOutcomesVisibleBeforeApply',
-      'autocompleteExactNames',
-      'localArgsRejected',
-      'formOpened',
-      'draftCreated',
-      'validated',
-      'previewed',
-      'applied',
-      'escapeClosed',
-      'uiAppliedCustomEffect',
-      'removed',
-      'reverted',
-      'offPanelWarning',
-      'offValidationRejected',
-      'offHelperCountUnchanged',
-      'offToolOriginalPreserved',
-      'warningBeforeTyping',
-      'warningAfterTyping',
-      'warningAfterActualBash',
-    ];
+    const required = terminalUiChecks;
     const missing = required.filter((key) => result?.[key] !== true);
     console.log(
       JSON.stringify({
@@ -102,7 +110,8 @@ try {
       result.helperCallsBeforeOff > 1000 ||
       !Number.isSafeInteger(result.helperCallsAfterOff) ||
       result.helperCallsBeforeOff !== result.helperCallsAfterOff ||
-      !result.previewObservedActions?.some(
+      !Array.isArray(result.previewObservedActions) ||
+      !result.previewObservedActions.some(
         (pair) =>
           Array.isArray(pair) &&
           pair.length === 2 &&
@@ -110,19 +119,30 @@ try {
           pair[1] === 'none',
       ) ||
       required.some((key) => result[key] !== true)
-    )
-      throw new Error('TERMINAL_UI_EVIDENCE_INVALID');
+    ) {
+      console.log(JSON.stringify({ code: 'TERMINAL_UI_CHECK_FAILED' }));
+      failed = true;
+    }
   }
-  console.log(
-    JSON.stringify({
-      code: 'TERMINAL_UI_VERIFIED',
-      host: '2.1.294',
-      sizes: ['140x40', '80x40'],
-      modelRequests: 0,
-      scope:
-        'synthetic-terminal-only; Desktop and independent usability unqualified',
-    }),
-  );
+  if (failed) process.exitCode = 1;
+  else
+    console.log(
+      JSON.stringify({
+        code: 'TERMINAL_UI_VERIFIED',
+        host: '2.1.294',
+        sizes: ['140x40', '80x40'],
+        modelRequests: 0,
+        scope:
+          'synthetic-terminal-only; Desktop and independent usability unqualified',
+      }),
+    );
+} catch (error) {
+  const code =
+    error.message === 'TERMINAL_UI_PREREQUISITE_UNAVAILABLE'
+      ? error.message
+      : 'TERMINAL_UI_BOOTSTRAP_FAILED';
+  console.log(JSON.stringify({ code }));
+  process.exitCode = code === 'TERMINAL_UI_PREREQUISITE_UNAVAILABLE' ? 2 : 1;
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
