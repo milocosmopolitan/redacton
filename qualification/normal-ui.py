@@ -244,6 +244,13 @@ def input_active(label):
     geometry = control_geometry(label)
     return bool(geometry and geometry['bold'] == geometry['characters'])
 
+def terminal_cursor():
+    column = screen.cursor.x
+    # pyte keeps a one-past-column cursor until the next character wraps.
+    if type(column) is int and column == screen.columns:
+        column -= 1
+    return {'row': screen.cursor.y, 'column': column}
+
 def off_frame(phase):
     if len(off_frames) >= 8:
         return
@@ -251,7 +258,7 @@ def off_frame(phase):
     controls = {key: control_geometry(label) for key, label in [('ruleId', 'Rule ID'), ('prefix', 'Public prefix,'), ('length', 'Run length,'), ('createDraft', 'Create draft'), ('validate', 'Validate')]}
     cursor_field = next((key for key in ['ruleId', 'prefix', 'length'] if controls[key] and controls[key]['row'] <= screen.cursor.y <= controls[key]['endRow'] and screen.cursor.x >= controls[key]['column']), 'unknown')
     child_exit = poll()
-    off_frames.append({'stage': stage, 'phase': phase, 'alive': child_exit is None, 'exitCode': child_exit, 'elapsedMs': min(180000, int((time.monotonic() - probe_start) * 1000)), 'cursor': {'row': screen.cursor.y, 'column': screen.cursor.x}, 'cursorLabelRow': cursor_field, 'pane': {'focused': visible_words('Local panel has keyboard focus', view), 'unfocused': visible_words('WARNING: local panel is not focused', view), 'legacyFocused': 'Local panel has keyboard focus' in view}, 'notices': {'invalidCandidate': visible_words('INVALID_CANDIDATE', view), 'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view)}, 'actions': {**off_action_counts, **off_input_counts}, 'controls': controls})
+    off_frames.append({'stage': stage, 'phase': phase, 'alive': child_exit is None, 'exitCode': child_exit, 'elapsedMs': min(180000, int((time.monotonic() - probe_start) * 1000)), 'cursor': terminal_cursor(), 'cursorLabelRow': cursor_field, 'pane': {'focused': visible_words('Local panel has keyboard focus', view), 'unfocused': visible_words('WARNING: local panel is not focused', view), 'legacyFocused': 'Local panel has keyboard focus' in view}, 'notices': {'invalidCandidate': visible_words('INVALID_CANDIDATE', view), 'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view)}, 'actions': {**off_action_counts, **off_input_counts}, 'controls': controls})
 
 try:
     deadline = time.monotonic() + float(os.environ.get('REDACTON_UI_SECONDS', '45'))

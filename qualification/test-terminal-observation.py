@@ -16,7 +16,7 @@ if os.environ.get("REDACTON_PYTE_PATH"):
     sys.path.insert(0, os.environ["REDACTON_PYTE_PATH"])
 
 source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text(encoding='utf8'))
-functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'input_active', 'startup_dialog', 'prepare_ui_companion']]
+functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'input_active', 'terminal_cursor', 'startup_dialog', 'prepare_ui_companion']]
 scope = {'re': re, 'os': os, 'shutil': shutil, 'json': json}
 exec(compile(ast.Module(body=functions, type_ignores=[]), 'terminal-observation', 'exec'), scope)
 
@@ -124,6 +124,28 @@ class TerminalObservationTest(unittest.TestCase):
         self.assertFalse(scope['visible_words']('TURN_ON_TO_VALIDATE', 'TURN_ON_TO_SAVE'))
 
 class TerminalQueryTest(unittest.TestCase):
+    def test_pending_wrap_projection_preserves_the_observer(self):
+        import pyte
+        for width in [80, 140]:
+            with self.subTest(width=width):
+                screen = pyte.Screen(width, 40)
+                screen.draw('X' * width)
+                scope['screen'] = screen
+                self.assertEqual((screen.cursor.y, screen.cursor.x), (0, width))
+                self.assertEqual(scope['terminal_cursor'](), {'row': 0, 'column': width - 1})
+                self.assertEqual((screen.cursor.y, screen.cursor.x), (0, width))
+                screen.draw('Y')
+                self.assertEqual((screen.cursor.y, screen.cursor.x), (1, 1))
+                self.assertEqual(screen.buffer[1][0].data, 'Y')
+                self.assertEqual(scope['terminal_cursor'](), {'row': 1, 'column': 1})
+
+    def test_cursor_projection_preserves_invalid_values_for_strict_ingress(self):
+        for width in [80, 140]:
+            for value in [-1, width + 1, float(width), str(width), True]:
+                with self.subTest(width=width, value=value):
+                    scope['screen'] = types.SimpleNamespace(columns=width, cursor=types.SimpleNamespace(y=0, x=value))
+                    self.assertIs(scope['terminal_cursor']()['column'], value)
+
     def observer(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location('terminal_observer_test', pathlib.Path(__file__).with_name('terminal-observer.py'))

@@ -10,6 +10,7 @@
 - Registered `/redacton` and `/redactoff` for immediate execution during an active turn, preserving the policy captured by each operation already in flight.
 - Added `/redactconfig` as an immediate alias for the existing local configuration panel, with the same validation, preview, explicit Apply and prompt fallback guards.
 - Fixed Windows Node 22 settings reads to compare consistent volume serial widths while preserving file identity and replacement checks.
+- Projected terminal diagnostic cursors at pyte's pending-wrap boundary to the last physical column while retaining strict evidence validation.
 
 ## 0.1.0
 
