@@ -149,7 +149,7 @@ async function processStart(pid: number): Promise<string | null> {
         ? await execute('/bin/ps', ['-p', String(pid), '-o', 'lstart='], {
             timeout: 500,
             maxBuffer: 1024,
-            env: { LC_ALL: 'C' },
+            env: { LC_ALL: 'C', TZ: 'UTC' },
           })
         : process.platform === 'win32' && process.env.SystemRoot
           ? await execute(

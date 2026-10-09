@@ -981,3 +981,48 @@ test('deep crashed claimant chains stay busy without deleting indeterminate leas
     assert.deepEqual((await readdir(join(root, 'personal'))).sort(), before);
     assert.deepEqual(await load(store), initial);
   }));
+
+test('macOS lease process starts use a stable UTC identity across parent timezone environments', {
+  skip: process.platform !== 'darwin',
+}, () => {
+  const code = `import {SettingsStore} from './helper/dist/storage.js';const owner=await new SettingsStore().ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');console.log(JSON.stringify({start:owner.start,pid:owner.pid}));`;
+  const probes = [];
+  // Probe this same live parent PID through distinct parent TZ environments.
+  const source = `import {execFileSync} from 'node:child_process';const p=JSON.parse(process.env.FIXTURE_PID);console.log(JSON.stringify(execFileSync('/bin/ps',['-p',String(p),'-o','lstart='],{encoding:'utf8',env:{LC_ALL:'C',TZ:'UTC'}}).trim()));`;
+  for (const TZ of ['UTC', 'America/New_York']) {
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', source],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_OPTIONS: '',
+          NODE_PATH: '',
+          TZ,
+          FIXTURE_PID: String(process.pid),
+        },
+      },
+    );
+    assert.equal(result.status, 0);
+    probes.push(JSON.parse(result.stdout));
+  }
+  assert.equal(probes[0], probes[1]);
+  // Actual ownLease must match the UTC ps observation for each child's own PID.
+  for (const TZ of ['UTC', 'America/New_York']) {
+    const check = code.replace(
+      'console.log(JSON.stringify({start:owner.start,pid:owner.pid}));',
+      `const {execFileSync}=await import('node:child_process');const utc=execFileSync('/bin/ps',['-p',String(process.pid),'-o','lstart='],{encoding:'utf8',env:{LC_ALL:'C',TZ:'UTC'}}).trim();console.log(JSON.stringify({same:owner.start===utc}));`,
+    );
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', check],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '', TZ },
+      },
+    );
+    assert.equal(result.status, 0);
+    assert.equal(JSON.parse(result.stdout).same, true);
+  }
+});

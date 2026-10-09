@@ -10,7 +10,7 @@ file sync before rename, and nonce revalidation before release or recovery.
 Version 2 leases add platform/host identity and a process-start observation.
 No timestamp or TTL permits removal of a live writer. Linux additionally binds
 ownership to the kernel boot ID and PID namespace. Process starts come from Linux
-`/proc/<pid>/stat`, macOS `/bin/ps lstart`, or Windows PowerShell `Get-Process`
+`/proc/<pid>/stat`, macOS `/bin/ps lstart` with fixed UTC timezone, or Windows PowerShell `Get-Process`
 StartTime UTC ticks. macOS has second-level precision; an indistinguishable reused
 PID conservatively stays busy. Probes have fixed timeouts of 500 ms on macOS and
 1,000 ms on Windows. Missing probes fail settings saves with a fixed unavailable
