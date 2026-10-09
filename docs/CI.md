@@ -74,3 +74,20 @@ For a real WSL2 installer probe, explicitly set `attempt_wsl: true` on a Windows
 For full WSL2 x64 host probes, explicitly select `attempt_wsl_host: true` on the same Windows x64 Node **24.21.0** host dispatch. This includes the installer checks and reuses the owned distro, then fetches the exact public source SHA into a clean ext4 checkout, verifies its lock and unchanged canonical archive digest, and runs Linux Node **22.16.0** and **24.21.0** independently. No Windows Git credentials or user sessions are copied. Only strict bounded WSL host records enter the release evidence directory; installer reports and diagnostic summaries cannot satisfy host gates. A missing optional WSL artifact grants no qualification, and the strict release gate still rejects absent required rows.
 
 For a bounded WSL ARM64 capability check, select `target: wsl-arm-capability`. This canonical-repository-only dispatch uses native `windows-11-arm`, skips all package/Node/Claude jobs, and has a **5-minute** job limit. It reads existing Windows component states without enabling features or rebooting. When ready, it imports only an owned UUID distro using the checksum-pinned official Ubuntu ARM64 rootfs, verifies actual WSL2 kernel and `aarch64`, and removes that distro and its temporary files. Missing components block this runner image only. Its fixed-code/boolean report is boot capability evidence, never actual-host or release qualification.
+
+## Current remediation measurements and authority gates
+
+The existing PR Linux pure Node 22/24 jobs and Windows Node 22 package job also
+run bounded startup/scan/settings measurements. Their small numeric JSON reports
+have three-day retention; no new job, daily schedule, paid model endpoint or
+machine-specific latency threshold is introduced. Failed bounded operations fail
+the measurement step. An unavailable native addon is explicit while forced WASM
+still runs. See [measurement method and local observations](BUDGETS.md).
+
+SDK and stream-origin disable attempts now test refusal with protection retained.
+They cannot stand in for a local user's OFF action. The actual-host OFF gate also
+requires terminal composer execution and immediate/persistent warnings at both
+140 and 80 columns, using the existing isolated Python dependencies. A missing
+terminal prerequisite stays blocked. Historical records stay pinned to their
+original source/host/artifact; print-mode denial does not retroactively replace
+old OFF/no-helper evidence or qualify a new platform.
