@@ -4,9 +4,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readTar } from './artifact-archive.mjs';
+import { cancellationDiagnostics } from './cancellation-evidence.mjs';
+import { configRaceDiagnostics } from './config-race-evidence.mjs';
 import { faultDiagnostics } from './fault-evidence.mjs';
+import { preparePythonDependencies } from './python-probe.mjs';
 import { requiredGates } from './qualification-evidence.mjs';
-import { terminalUiDiagnostics } from './terminal-ui-evidence.mjs';
+import { raceDiagnostics } from './race-evidence.mjs';
+import {
+  terminalUiDiagnostics,
+  windowsPtyDiagnostics,
+} from './terminal-ui-evidence.mjs';
 
 const sha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
 if (sha.status !== 0 || !/^[a-f0-9]{40}\s*$/.test(sha.stdout))
@@ -42,8 +49,19 @@ if (!packageOnly && (host.status !== 0 || !host.stdout.startsWith('2.1.294 ')))
 const archive = await readFile(`artifacts/redacton-${pkg.version}.tar.gz`);
 const temp = await mkdtemp(join(tmpdir(), 'redacton-ci-host-'));
 const pluginRoot = join(temp, `redacton-${pkg.version}`);
+let pythonDependencies;
+let pythonBootstrapFailure;
 function run(gate, script, ...args) {
   if (onlyProbe !== 'all' && gate !== onlyProbe && gate !== 'package') return;
+  const needsPython =
+    ['terminal-ui', 'toggle-races', 'config-races'].includes(gate) ||
+    (gate === 'cancellation' && process.platform === 'win32');
+  if (needsPython && pythonBootstrapFailure) {
+    gates[gate] = pythonBootstrapFailure.status;
+    gateCodes[gate] = pythonBootstrapFailure.code;
+    console.log(JSON.stringify({ gate, ...pythonBootstrapFailure }));
+    return;
+  }
   // Harness stdout/stderr is discarded. Only a fixed gate and result leave this wrapper.
   const result = spawnSync(process.execPath, [script, ...args], {
     timeout: gate === 'terminal-ui' ? 450000 : 240000,
@@ -53,11 +71,28 @@ function run(gate, script, ...args) {
       ...process.env,
       REDACTON_PLUGIN_ROOT: pluginRoot,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      ...(pythonDependencies
+        ? { REDACTON_PROBE_PYTHON_DEPS: pythonDependencies }
+        : {}),
     },
   });
   if (gate === 'terminal-ui')
     for (const diagnostic of terminalUiDiagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(diagnostic));
+  if (gate === 'toggle-races' || gate === 'config-races') {
+    const diagnostics =
+      gate === 'config-races' ? configRaceDiagnostics : raceDiagnostics;
+    for (const value of diagnostics(result.stdout ?? ''))
+      console.log(JSON.stringify(value));
+    for (const value of windowsPtyDiagnostics(result.stdout ?? ''))
+      console.log(JSON.stringify(value));
+  }
+  if (gate === 'cancellation') {
+    for (const value of cancellationDiagnostics(result.stdout ?? ''))
+      console.log(JSON.stringify(value));
+    for (const value of windowsPtyDiagnostics(result.stdout ?? ''))
+      console.log(JSON.stringify(value));
+  }
   if (gate === 'guarded-errors' && script === 'qualification/failure-host.mjs')
     for (const diagnostic of faultDiagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(diagnostic));
@@ -66,7 +101,7 @@ function run(gate, script, ...args) {
       ? 'passed'
       : result.status === 2 &&
           !result.error &&
-          ['toggle-races', 'terminal-ui'].includes(gate)
+          ['toggle-races', 'config-races', 'terminal-ui'].includes(gate)
         ? 'blocked'
         : 'failed';
   gateCodes[gate] =
@@ -124,6 +159,16 @@ try {
       ...(packageOnly ? ['--fixture-claude'] : []),
     );
   if (!packageOnly) {
+    if (['all', 'terminal-ui'].includes(onlyProbe)) {
+      try {
+        pythonDependencies = await preparePythonDependencies(temp);
+      } catch (error) {
+        pythonBootstrapFailure =
+          error.message === 'PYTHON_PROBE_PREREQUISITE_UNAVAILABLE'
+            ? { status: 'blocked', code: 'PREREQUISITE_UNAVAILABLE' }
+            : { status: 'failed', code: 'PROCESS_FAILED' };
+      }
+    }
     for (const [gate, mode] of [
       ['prompt', 'prompt'],
       ['read', 'read'],
@@ -142,16 +187,15 @@ try {
     if (gates['guarded-errors'] === 'passed')
       run('guarded-errors', 'qualification/failure-host.mjs');
     run('sessions', 'qualification/session-host.mjs');
-    // Cancellation uses Unix process groups. Windows remains blocked until an actual portable regression exists.
-    if (process.platform !== 'win32')
-      run('cancellation', 'qualification/cancellation-host.mjs');
-    else if (onlyProbe === 'all')
-      gateCodes.cancellation = 'PLATFORM_UNAVAILABLE';
-    run('toggle-races', 'qualification/races-host.mjs');
-    if (process.platform !== 'win32')
-      run('terminal-ui', 'scripts/qualify-ui.mjs');
-    else if (['all', 'terminal-ui'].includes(onlyProbe))
-      gateCodes['terminal-ui'] = 'PLATFORM_UNAVAILABLE';
+    run(
+      'cancellation',
+      process.platform === 'win32'
+        ? 'scripts/qualify-cancellation.mjs'
+        : 'qualification/cancellation-host.mjs',
+    );
+    run('toggle-races', 'scripts/qualify-races.mjs');
+    run('config-races', 'scripts/qualify-config-race.mjs');
+    run('terminal-ui', 'scripts/qualify-ui.mjs');
   }
   const wsl =
     process.platform === 'linux' &&
@@ -192,7 +236,11 @@ try {
   console.log(
     JSON.stringify({
       code: 'HOST_PROBES_COMPLETE',
-      qualification: 'blocked',
+      qualification: Object.values(gates).includes('failed')
+        ? 'failed'
+        : Object.values(gates).includes('blocked')
+          ? 'blocked'
+          : 'passed',
       missing: requiredGates.filter((key) => gates[key] === 'blocked'),
     }),
   );

@@ -371,11 +371,18 @@ export function register(on: On) {
     await $.command.register({
       name: 'redacton',
       description: 'Request local credential protection for new operations',
+      immediate: true,
     });
     await $.command.register({
       name: 'redactoff',
       description:
         'Disable credential protection for new operations in this session',
+      immediate: true,
+    });
+    await $.command.register({
+      name: 'redactconfig',
+      description: 'Open local configuration, including during an active tool',
+      immediate: true,
     });
     await ensurePersonal($, state, config, settings, runtime);
     await checkReadiness($, state, runtime, config.snapshot());
@@ -429,6 +436,7 @@ export function register(on: On) {
     {
       command: [
         'redact:status',
+        'redactconfig',
         'redact:config',
         'redact:add-rule',
         'redact:remove-rule',
@@ -1484,7 +1492,9 @@ export function register(on: On) {
       return { drop: 'REDACTON_CLOSE_LOCAL_PANEL_BEFORE_PROMPT' };
     if (
       typeof e.text === 'string' &&
-      /^\/redact:(?:status|config|add-rule|remove-rule)(?:\s|$)/.test(e.text)
+      /^\/(?:redact:(?:status|config|add-rule|remove-rule)|redactconfig)(?:\s|$)/.test(
+        e.text,
+      )
     )
       return { drop: 'REDACTON_LOCAL_COMMAND_UNAVAILABLE' };
     const controller = state;

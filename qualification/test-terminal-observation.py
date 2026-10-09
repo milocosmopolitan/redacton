@@ -1,20 +1,35 @@
 """Check rendered focus without launching a host or importing terminal dependencies."""
 import ast
+import os
+import shutil
+import subprocess
+import tempfile
+import json
 import pathlib
 import re
 import types
 import unittest
+from unittest.mock import patch
+import runpy
 
-source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text())
-functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words']]
-scope = {'re': re}
+source = ast.parse(pathlib.Path(__file__).with_name('normal-ui.py').read_text(encoding='utf8'))
+functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in ['focused', 'visible_words', 'control_geometry', 'startup_dialog', 'prepare_ui_companion']]
+scope = {'re': re, 'os': os, 'shutil': shutil, 'json': json}
 exec(compile(ast.Module(body=functions, type_ignores=[]), 'terminal-observation', 'exec'), scope)
 
 class TerminalObservationTest(unittest.TestCase):
     def screen(self, lines):
-        buffer = {row: {column: types.SimpleNamespace(reverse=not char.isspace()) for column, char in enumerate(line)} for row, line in enumerate(lines)}
+        buffer = {row: {column: types.SimpleNamespace(reverse=not char.isspace(), bold=False, fg="default") for column, char in enumerate(line)} for row, line in enumerate(lines)}
         scope['screen'] = types.SimpleNamespace(display=lines, buffer=buffer)
         return buffer
+
+    def test_observer_source_decoding_survives_windows_default(self):
+        original = pathlib.Path.read_text
+        def windows_default(path, encoding=None, errors=None):
+            return original(path, encoding=encoding or 'cp1252', errors=errors)
+        with patch.object(pathlib.Path, 'read_text', windows_default):
+            loaded = runpy.run_path(str(pathlib.Path(__file__)))
+        self.assertTrue(loaded['scope']['visible_words']('TURN_ON_TO_VALIDATE', 'TURN_ON_TO_VAL │ IDATE'))
 
     def test_wrapped_focus_requires_every_label_cell(self):
         buffer = self.screen(['Create   ', 'draft    '])
@@ -22,6 +37,38 @@ class TerminalObservationTest(unittest.TestCase):
         buffer[1][0].reverse = False
         self.assertFalse(scope['focused']('Create draft'))
         self.assertFalse(scope['focused']('Validate'))
+
+    def test_portable_fixture_counter_is_independent_of_working_directory(self):
+        node = shutil.which('node')
+        self.assertIsNotNone(node)
+        with tempfile.TemporaryDirectory(prefix='redacton fixture 한글 ') as folder:
+            workspace = str(pathlib.Path(__file__).resolve().parent.parent)
+            companion = scope['prepare_ui_companion'](workspace, folder, node)
+            counter_script = os.path.join(folder,'ui-counter.mjs')
+            for _ in range(2):
+                child = subprocess.run([node,counter_script],cwd=tempfile.gettempdir(),capture_output=True,timeout=10)
+                self.assertEqual(child.returncode,0)
+                self.assertEqual(child.stdout,b'syntheticcred_ABCDEF0123456789\n')
+                self.assertEqual(child.stderr,child.stdout)
+            self.assertEqual(pathlib.Path(folder,'ui-execution-counter').read_text(),'xx')
+            self.assertNotIn('printf x >>',pathlib.Path(companion,'hooks/register.js').read_text())
+
+    def test_onboarding_never_consumes_configuration_form_input(self):
+        form = 'Local panel has keyboard focus. Never enter a credential. Project patterns require explicit load and trust. Press Enter to select.'
+        self.assertTrue('trust' in form.lower() and 'Enter' in form)
+        self.assertFalse(scope['startup_dialog']('trust', 'off-form', form))
+        self.assertFalse(scope['startup_dialog']('trust', 'startup', form))
+        trust = 'Is this a project you created or one you trust? Enter to confirm'
+        self.assertTrue(scope['startup_dialog']('trust', 'startup', trust))
+        self.assertFalse(scope['startup_dialog']('trust', 'off-form', trust))
+        key = 'Do you want to use this API key? Enter to confirm'
+        self.assertTrue(scope['startup_dialog']('api-key', 'startup', key))
+        self.assertFalse(scope['startup_dialog']('api-key', 'off-form', key))
+
+    def test_geometry_keeps_only_known_label_cells(self):
+        self.screen(['Create   ', 'draft    '])
+        self.assertEqual(scope['control_geometry']('Create draft'), {'row': 0, 'column': 0, 'endRow': 1, 'endColumn': 4, 'characters': 11, 'reverse': 11, 'bold': 0, 'colored': 0})
+        self.assertIsNone(scope['control_geometry']('Validate'))
 
     def test_exact_focus_and_receipt(self):
         self.screen(['Create draft'])

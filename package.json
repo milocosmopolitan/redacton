@@ -24,7 +24,7 @@
     "ci:identity": "node scripts/ci-identity.mjs",
     "ci:host": "node scripts/qualify-host.mjs",
     "release:gate": "node scripts/qualification-gate.mjs",
-    "test:installer": "node --test tests/installers/installer.test.mjs"
+    "test:installer": "node --test tests/installers/*.test.mjs"
   },
   "engines": {
     "node": ">=22.16.0 <23 || >=24.21.0 <25"

@@ -31,6 +31,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - id: approved
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release-records.mjs select
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.approved.outputs.run_id }}
+          name: approved-release-records
+          path: qualification/release-records
+      - if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          APPROVED_RUN: ${{ steps.approved.outputs.run_id }}
+        run: node scripts/release-records.mjs verify
       - if: github.event_name == 'workflow_dispatch'
         env:
           NODE22_RUN: ${{ inputs.node22_run }}
@@ -46,6 +63,16 @@ jobs:
           pattern: bounded-host-evidence-*
           merge-multiple: true
           path: qualification/evidence
+      # Pattern downloads tolerate an absent optional artifact. Missing required
+      # WSL rows still fail the strict release gate below.
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node24_run }}
+          pattern: bounded-wsl-host-evidence
+          merge-multiple: true
+          path: qualification/wsl-host-input
       - uses: actions/download-artifact@v4
         if: github.event_name == 'workflow_dispatch'
         with:
@@ -61,6 +88,8 @@ jobs:
           pattern: bounded-host-evidence-*
           merge-multiple: true
           path: qualification/evidence
+      - if: github.event_name == 'workflow_dispatch'
+        run: node scripts/ingest-wsl-evidence.mjs
       - uses: actions/download-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.manual_run != ''
         with:
@@ -83,4 +112,16 @@ jobs:
           name: reviewed-manual-evidence
           path: qualification/evidence
       - run: npm run release:gate
+      - run: node scripts/verify-artifact.mjs
+      - if: github.event_name == 'workflow_dispatch'
+        env:
+          MANUAL_RUN: ${{ inputs.manual_run }}
+        run: node scripts/release-records.mjs prepare
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: approved-release-records
+          path: qualification/release-records
+          retention-days: 14
+          if-no-files-found: error
       - run: node scripts/ci-identity.mjs

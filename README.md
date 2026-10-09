@@ -40,6 +40,7 @@ New, resumed and branched CLI sessions start with protection requested **ON**. R
 | `/redactoff` | Bypass scans for subsequent operations in this session. |
 | `/redact:status` | Show cached readiness, coverage, rules and recent outcomes. |
 | `/redact:config`, `/redact:add-rule`, `/redact:remove-rule` | Manage custom formats through local forms. |
+| `/redactconfig` | Open the same local configuration form immediately during an active turn. |
 
 **Commands take no arguments. Never paste secrets, patterns or test text into slash-command arguments; the host can store them before local rejection.** Running operations keep the policy they started with. OFF displays a prompt-area warning: **⚠ Redacton OFF — credential protection disabled**.
 

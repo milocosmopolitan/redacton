@@ -1,5 +1,6 @@
 export function register(on) {
   let scans = 0;
+  let reports = 0;
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'race-report', description: 'Fixed synthetic tool scanner count' });
     return next(e);
@@ -11,5 +12,5 @@ export function register(on) {
     } catch {}
     return next(e);
   });
-  on('command.run', { command: 'race-report' }, () => ({ text: `RACE_REPORT_${scans}` }));
+  on('command.run', { command: 'race-report' }, () => ({ text: `RACE_REPORT_${scans}_${++reports}` }));
 }
