@@ -62,6 +62,7 @@ terminal = pyte.Stream(screen)
 raw = ''
 exit_code = None
 stage = 'startup'
+off_action_counts = {'createDraft': 0, 'validate': 0}
 stage_time = time.monotonic()
 trust_answered = False
 key_answered = False
@@ -82,6 +83,10 @@ def poll():
     return exit_code
 
 def send(value, enter=False):
+    if enter and stage == 'off-length':
+        off_action_counts['createDraft'] += 1
+    if enter and stage == 'off-draft':
+        off_action_counts['validate'] += 1
     os.write(master, value.encode())
     if enter:
         time.sleep(.2)
@@ -313,6 +318,9 @@ try:
     observations['statusCustomCounts']=re.findall(r'(\d+) custom rules:',view+raw)
     observations['completed'] = stage == 'complete'
     observations['finalStage'] = stage
+    observations['focusedButton'] = next((label for label in ['Create draft', 'Validate', 'Synthetic preview', 'Apply session', 'Revert', 'Remove rule'] if focused(label)), None)
+    observations['offReceiptState'] = {'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view), 'editingDraft': '· editing · base' in view}
+    observations['offActionCounts'] = off_action_counts
     observations['childExitCode'] = poll()
     observations['startupCategories'] = [word for word in ['trust', 'API key', 'Welcome', 'login', 'error', 'Enter'] if word.lower() in displayed().lower()]
     observations['modelRequests']=model_requests

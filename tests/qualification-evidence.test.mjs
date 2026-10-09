@@ -128,6 +128,13 @@ test('release gate requires all 14 exact-commit rows and the actual qualified ar
       }
     }
     assert.equal(gate().status, 0);
+    const original = await readFile(paths[0], 'utf8');
+    const diagnostic = JSON.parse(original);
+    diagnostic.gates.sdk = 'blocked';
+    diagnostic.gateCodes.sdk = 'NOT_RUN';
+    await writeFile(paths[0], JSON.stringify(diagnostic));
+    assert.match(gate().stderr, /QUALIFICATION_BLOCKED/);
+    await writeFile(paths[0], original);
     await writeFile(
       join(dir, 'artifacts/redacton-0.1.0.tar.gz'),
       'changed bytes',

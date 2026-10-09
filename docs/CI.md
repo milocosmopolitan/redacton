@@ -36,6 +36,8 @@ Measured PR [run 37885273757](https://github.com/milocosmopolitan/redacton/actio
 
 Choose `scope: package` to run the native package/installer matrix without downloading Claude or implying host qualification. Those records leave host gates blocked with `NOT_RUN`; the installer uses an explicitly disclosed existence-only Claude prerequisite fixture. Choose `scope: host` for pinned-host probes, persistent OFF/no-helper checks and Unix terminal UI at 140×40 and 80×40 with hash-locked temporary Python dependencies. Windows terminal UI remains an external manual gate.
 
+For a failed UI or guarded-error probe, select `probe: terminal-ui` or `probe: guarded-errors` with one target and `scope: host`. Canonical package provenance and installer prerequisites still run; other host gates remain blocked with `NOT_RUN`, so diagnostic evidence cannot qualify a release. Diagnostics whitelist UI stages, focused button, receipts and action counts, or fault modes and bounded boundary counters. Raw screens, payloads and stderr remain excluded. The default `probe: all` preserves full qualification checks.
+
 Strict `gateCodes` distinguish pass, unavailable/manual/platform prerequisites and failed/timeout/process outcomes. Only explicit race/UI probes may use exit 2 for an unavailable capability. The race probe holds an actual Bash execution behind a release file and requires the actual toggle acknowledgement before release/model delivery. If headless streaming serializes commands, `RACE_PHASE_UNAVAILABLE` stays blocked, rather than crediting a subsequent toggle as a race.
 
 ## Reviewed external manual evidence

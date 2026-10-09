@@ -33,12 +33,15 @@ const modes = [
   'missing-node',
 ];
 const reports = [];
+for (const name of ['failure-host-report.json', 'failure-host-report.md'])
+  await rm(resolve('qualification/results', name), { force: true });
 const pluginSourceSha256 = {};
 await mkdir(plugin);
 for (const name of [
   '.claude-plugin/plugin.json',
   'hooks',
   'commands',
+  'package.json',
   'helper/src/config.ts',
   'mod',
   'helper/dist',
@@ -246,12 +249,37 @@ try {
     }
     try {
       const preflight = await launch('/redacton');
+      const preflightState = {
+        preflightExitCode: preflight.exitCode,
+        preflightOn: preflight.output.includes('Redacton ON.'),
+        preflightRequests: captures.length,
+      };
       if (
         preflight.exitCode !== 0 ||
         !preflight.output.includes('Redacton ON.') ||
         captures.length !== 0
-      )
+      ) {
+        console.log(
+          JSON.stringify({
+            code: 'FAULT_PROBE_STATE',
+            mode,
+            ...preflightState,
+            exitCode: null,
+            requests: captures.length,
+            toolResultCount: 0,
+            rawInToolResults: false,
+            toolResultIsError: false,
+            fixedWithholdCode: false,
+            executions: 0,
+            completed: false,
+            timeoutChildAlive: null,
+            readinessUnavailable: preflight.output.includes(
+              'Protection unavailable',
+            ),
+          }),
+        );
         throw new Error('FAULT_PREFLIGHT_FAILED');
+      }
       const result = await launch('Run the supplied synthetic tool once.');
       const toolResults = captures
         .flatMap((value) => value.messages ?? [])
@@ -299,6 +327,23 @@ try {
           'Protection unavailable',
         ),
       };
+      console.log(
+        JSON.stringify({
+          code: 'FAULT_PROBE_STATE',
+          mode,
+          ...preflightState,
+          exitCode: report.exitCode,
+          requests: report.requests,
+          toolResultCount: report.toolResultCount,
+          rawInToolResults: report.rawInToolResults,
+          toolResultIsError: report.toolResultIsError,
+          fixedWithholdCode: report.fixedWithholdCode,
+          executions: report.executions,
+          completed: report.completed,
+          timeoutChildAlive: report.timeoutChildAlive,
+          readinessUnavailable: report.readinessUnavailable,
+        }),
+      );
       const promptFault = mode === 'prompt-invalid' || mode === 'missing-node';
       if (
         result.exitCode !== 0 ||
@@ -318,18 +363,33 @@ try {
         throw new Error('MISSING_NODE_NOT_UNAVAILABLE');
       reports.push(report);
       console.log(JSON.stringify(report));
+    } catch (error) {
+      const code = [
+        'FAULT_PREFLIGHT_FAILED',
+        'FAULT_BOUNDARY_FAILED',
+        'INVALID_TIMEOUT_PID',
+        'TIMEOUT_PID_CHECK_FAILED',
+        'MISSING_NODE_NOT_UNAVAILABLE',
+      ].includes(error?.message)
+        ? error.message
+        : 'FAULT_PROBE_FAILED';
+      console.log(JSON.stringify({ code, mode }));
+      process.exitCode = 1;
+      // Every mode is independent. A failure must not hide later Windows faults.
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
   }
-  await writeFile(
-    resolve('qualification/results/failure-host-report.json'),
-    `${JSON.stringify({ hostVersion, node: process.version, platform: process.platform, arch: process.arch, pluginSourceSha256, results: reports }, null, 2)}\n`,
-  );
-  await writeFile(
-    resolve('qualification/results/failure-host-report.md'),
-    `# Actual host process-failure qualification\n\nClaude Code ${hostVersion}, Node ${process.version}, ${process.platform} ${process.arch}. A test-owned temporary copy of the product plugin replaced only its helper with synthetic fault modes. A loopback Anthropic-format endpoint inspected real host request JSON in memory. Existing user settings/transcripts were not loaded; temporary configuration, copied dependencies and counters were removed. No raw payload, stderr, input path or matched value was recorded.\n\nNine tool-result fault modes passed: invalid JSON, mismatched request ID, duplicate segment IDs, missing segments, unknown status, missing helper after successful readiness/prompt, an actual engine policy callback throw, 5 MiB stdout exceeding the inspected 4 MiB host capture cap, and an actual helper sleep exceeding the host's 2,000 ms process timeout. Each run produced exactly two model requests and one errored tool result with REDACTON_WITHHELD, excluded the synthetic credential from tool-result content, and executed Bash exactly once according to its nonsecret counter. The timeout child PID was checked and was no longer alive. Total CLI timings include host startup and are not helper latency measurements. Exact counters and timings are in [failure-host-report.json](failure-host-report.json).\n\nA separate malformed-helper response during prompt submission produced zero model requests and zero tool executions. A missing-Node case changed only the test-owned temporary Mod process argv to a nonexistent executable; actual host process startup failed, readiness reported unavailable, and the protected prompt produced zero model requests or tool executions. This is a tested pre-delivery prompt withholding path. The synthetic credential remained present in the model-issued Bash argument, which is explicitly outside coverage; tool-result checks exclude those arguments.\n\nReproduce with \`rtk proxy node qualification/failure-host.mjs\`. Each CLI launch is bounded to 30 seconds. Protocol input-size boundaries and queue saturation also have unit/SDK evidence, while this probe exercises oversized child stdout and actual engine policy failure. The process truncation flag itself was not captured at the SDK process boundary, so the observed withholding does not distinguish host truncation from the parent response-size guard. Cancellation was not injected because the installed SDK test call interface exposes no supported abort control. These results do not establish immunity to arbitrary simultaneous outer/catch-handler failure or a platform matrix.\n`,
-  );
+  if (reports.length === modes.length) {
+    await writeFile(
+      resolve('qualification/results/failure-host-report.json'),
+      `${JSON.stringify({ hostVersion, node: process.version, platform: process.platform, arch: process.arch, pluginSourceSha256, results: reports }, null, 2)}\n`,
+    );
+    await writeFile(
+      resolve('qualification/results/failure-host-report.md'),
+      `# Actual host process-failure qualification\n\nClaude Code ${hostVersion}, Node ${process.version}, ${process.platform} ${process.arch}. A test-owned temporary copy of the product plugin replaced only its helper with synthetic fault modes. A loopback Anthropic-format endpoint inspected real host request JSON in memory. Existing user settings/transcripts were not loaded; temporary configuration, copied dependencies and counters were removed. No raw payload, stderr, input path or matched value was recorded.\n\nNine tool-result fault modes passed: invalid JSON, mismatched request ID, duplicate segment IDs, missing segments, unknown status, missing helper after successful readiness/prompt, an actual engine policy callback throw, 5 MiB stdout exceeding the inspected 4 MiB host capture cap, and an actual helper sleep exceeding the host's 2,000 ms process timeout. Each run produced exactly two model requests and one errored tool result with REDACTON_WITHHELD, excluded the synthetic credential from tool-result content, and executed Bash exactly once according to its nonsecret counter. The timeout child PID was checked and was no longer alive. Total CLI timings include host startup and are not helper latency measurements. Exact counters and timings are in [failure-host-report.json](failure-host-report.json).\n\nA separate malformed-helper response during prompt submission produced zero model requests and zero tool executions. A missing-Node case changed only the test-owned temporary Mod process argv to a nonexistent executable; actual host process startup failed, readiness reported unavailable, and the protected prompt produced zero model requests or tool executions. This is a tested pre-delivery prompt withholding path. The synthetic credential remained present in the model-issued Bash argument, which is explicitly outside coverage; tool-result checks exclude those arguments.\n\nReproduce with \`rtk proxy node qualification/failure-host.mjs\`. Each CLI launch is bounded to 30 seconds. Protocol input-size boundaries and queue saturation also have unit/SDK evidence, while this probe exercises oversized child stdout and actual engine policy failure. The process truncation flag itself was not captured at the SDK process boundary, so the observed withholding does not distinguish host truncation from the parent response-size guard. Cancellation was not injected because the installed SDK test call interface exposes no supported abort control. These results do not establish immunity to arbitrary simultaneous outer/catch-handler failure or a platform matrix.\n`,
+    );
+  }
 } finally {
   await rm(dir, { recursive: true, force: true });
 }
