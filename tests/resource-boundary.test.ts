@@ -6,6 +6,7 @@ import {
   localCommand,
   readRequest,
   syntheticResponse,
+  syntheticStorageReply,
 } from './fixtures/host.ts';
 
 const start = {
@@ -25,7 +26,11 @@ function setup(on: On, processHook: HookFor<'process.run'>) {
   on('command.register', (_$, e) => ({ value: { command: e.name } }));
   on('ui.log', () => ({ value: undefined }));
   on('ui.toast', () => ({ value: undefined }));
-  on('process.run', processHook).catch(() => ({
+  on('ui.close', () => ({ value: undefined }));
+  on('process.run', ($, e, next) => {
+    const storage = syntheticStorageReply(e.init?.stdin);
+    return storage ?? processHook($, e, next);
+  }).catch(() => ({
     deny: 'SYNTHETIC_PROCESS_FAILURE',
   }));
 }
@@ -78,6 +83,8 @@ test('five concurrent prompts dispatch at most four helpers and withhold the sat
 
 for (const fault of [
   'wrong-request',
+  'wrong-config-revision',
+  'undeclared-custom-count',
   'duplicate-segment',
   'missing-segment',
   'unknown-status',
@@ -95,6 +102,10 @@ for (const fault of [
       const result = reply(request);
       const response = syntheticResponse(request);
       if (fault === 'wrong-request') response.requestId = 'unrelated';
+      if (fault === 'wrong-config-revision')
+        response.configRevision = 'cfg-unrelated';
+      if (fault === 'undeclared-custom-count')
+        response.findingCounts = { unapproved_custom: 1 };
       if (fault === 'duplicate-segment') {
         const first = response.segments?.[0];
         if (!first) throw new Error('INVALID_FIXTURE_SEGMENTS');

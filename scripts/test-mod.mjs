@@ -7,9 +7,19 @@ await import('./build-helper.mjs');
 const root = new URL('../', import.meta.url);
 const destination = await mkdtemp(join(tmpdir(), 'redacton-mod-tests-'));
 try {
-  for (const name of ['.claude-plugin/plugin.json', 'hooks', 'mod']) {
+  for (const name of [
+    '.claude-plugin/plugin.json',
+    'hooks',
+    'commands',
+    'mod',
+  ]) {
     await cp(new URL(name, root), join(destination, name), { recursive: true });
   }
+  await mkdir(join(destination, 'helper/src'), { recursive: true });
+  await cp(
+    new URL('helper/src/config.ts', root),
+    join(destination, 'helper/src/config.ts'),
+  );
   await mkdir(join(destination, 'tests'));
   await cp(
     new URL('tests/fixtures/', root),
@@ -38,6 +48,7 @@ try {
     const env = {
       ...process.env,
       CLAUDE_CONFIG_DIR: config,
+      REDACTON_SETTINGS_ROOT: join(destination, 'settings'),
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:1',
       ANTHROPIC_API_KEY: 'qualification-only',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',

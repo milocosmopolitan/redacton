@@ -6,6 +6,7 @@ import {
   readRequest,
   stdoutOf,
   syntheticResponse,
+  syntheticStorageReply,
 } from './fixtures/host.ts';
 
 function host(on: On, behavior = 'ok'): string[] {
@@ -16,7 +17,13 @@ function host(on: On, behavior = 'ok'): string[] {
   on('command.register', (_$, e) => ({ value: { command: e.name } }));
   on('ui.log', () => ({ value: undefined }));
   on('ui.toast', () => ({ value: undefined }));
+  on('ui.close', () => ({ value: undefined }));
   on('process.run', (_$, e) => {
+    const storage = syntheticStorageReply(e.init?.stdin);
+    if (storage) {
+      calls.push('load-config');
+      return storage;
+    }
     const request = readRequest(e.init?.stdin);
     calls.push(request.operation);
     if (behavior === 'denied' && request.operation === 'sanitize')
@@ -112,7 +119,7 @@ test('OFF warning is present on the terminal AbovePrompt render tree', async ($,
   });
   await $.command.run(localCommand('redactoff'));
   const ui = await $.ui.mount({
-    plugin: 'redacton',
+    plugin: 'redact',
     component: 'AbovePrompt',
     requestId: 'synthetic-band',
     surface: 'terminal',

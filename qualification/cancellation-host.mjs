@@ -18,6 +18,8 @@ await mkdir(plugin);
 for (const path of [
   '.claude-plugin/plugin.json',
   'hooks',
+  'commands',
+  'helper/src/config.ts',
   'mod',
   'helper/dist',
 ]) {
@@ -38,7 +40,10 @@ await writeFile(
   `import { writeFileSync } from 'node:fs';
 let text=''; for await(const chunk of process.stdin) text+=chunk;
 const request=JSON.parse(text);
-const response={protocolVersion:1,requestId:request.requestId,status:'ok',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',artifact:'addon',findingCounts:{}};
+if(request.operation==='load-config') {
+ process.stdout.write(JSON.stringify({protocolVersion:2,requestId:request.requestId,status:'ok',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',artifact:'addon',settings:{scope:request.storage.scope,identity:'0'.repeat(64),revision:'absent',document:{schemaVersion:1,rules:[]}}}));process.exit(0);
+}
+const response={protocolVersion:request.protocolVersion,requestId:request.requestId,status:'ok',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',artifact:'addon',findingCounts:{},...(request.config?{configRevision:request.config.revision}:{})};
 if(request.operation==='sanitize') response.segments=request.segments.map(segment=>({id:segment.id,text:segment.text}));
 if(request.segments?.some(segment=>segment.id==='stdout')) {
  writeFileSync(new URL('./cancel-pid',import.meta.url),String(process.pid));
@@ -140,6 +145,7 @@ try {
       HOME: process.env.HOME,
       CLAUDE_CONFIG_DIR: join(dir, `config-${mode}`),
       ANTHROPIC_API_KEY: 'synthetic-local-only',
+      REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     };

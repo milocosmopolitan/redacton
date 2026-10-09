@@ -1,6 +1,6 @@
 # Architecture
 
-Redacton is an experimental Claude Code Mod. TypeScript is the source language for the Mod and Node helper; the host loads the Mod directly, while the helper is prebuilt for distribution. Detection stays in `@redact-secret/core@0.1.0-beta.14`; a Rust helper is not introduced because the existing engine already supplies native and WASM implementations.
+Redacton is a Claude Code Mod. TypeScript is the source language for the Mod and Node helper; the host loads the Mod directly, while the helper is prebuilt for distribution. Detection stays in `@redact-secret/core@0.1.0-beta.14`; a Rust helper is not introduced because the existing engine already supplies native and WASM implementations.
 
 ## Runtime boundaries
 
@@ -8,7 +8,7 @@ Redacton is an experimental Claude Code Mod. TypeScript is the source language f
 
 `helper/src/` runs in a separate Node process. It initializes the pinned engine and scans a whole event's text segments in one batch. The registration module launches an argv array and sends the request through stdin. Credentials never enter shell text, argv, explicit environment values, or temporary input files. `helper/dist/` is generated prebuilt output.
 
-`tests/` covers pure code and SDK event chains. `qualification/` holds reusable actual-host regressions using isolated configuration, synthetic credentials, and loopback model responses. Historical Alpha 1 evidence is linked from [compatibility](docs/COMPATIBILITY.md), rather than copied into the current source tree.
+`tests/` covers pure code and SDK event chains. `qualification/` holds reusable actual-host regressions using isolated configuration, synthetic credentials, and loopback model responses. Historical release evidence is linked from [compatibility](docs/COMPATIBILITY.md), rather than copied into the current source tree.
 
 ## State and delivery
 
@@ -20,9 +20,15 @@ For Read/Bash, an outer hook captures policy and associates the invocation by ag
 
 Adapters reconstruct an allowlist. Read scans content and the required file path; Bash scans stdout/stderr. Original `text`/`ref` aliases are discarded. Unknown fields, populated unsupported metadata, and nonempty downstream tool context withhold the whole selected result. Tool arguments and authentication parameters are unchanged.
 
+## Configuration UX
+
+Pure `mod/config.ts`, `mod/settings.ts` and `mod/view.ts` own staged edits, explicit layer replacement, immutable revisions, project trust and cached status. A canonical pure schema in `helper/src/config.ts` is shared with the helper and explicitly shipped for native TypeScript imports. Registration owns commands, local form events and SDK calls; imported controllers never receive capabilities.
+
+Configuration uses redact/block recipes compiled and parsed by pinned beta.14. Preserve the baseline callback: a ruleset alone defaults custom matches to warn. Names share one detector identity, so mixed names actions are rejected. Validate → synthetic preview → explicit apply; operation snapshots capture exact configuration with ON/OFF. Saved settings contain definitions only, with exact-document/revision project approval and privileged helper compare-and-replace writes. Scope identity is opaque location metadata, not a rule/input digest; private namespace initialization belongs to settings load/save, never status. Personal defaults restore before first supported work; project data remains pending until approved. See [configuration](docs/CONFIGURATION.md) and [the accepted decision](docs/decisions/validated-layered-configuration.md).
+
 ## Protocol and limits
 
-Protocol version 1 uses opaque request/segment IDs, policy `credentials-alpha1`, and statuses `ok`, `blocked`, or `failed`. Successful replies must contain exactly the requested segment set, pinned engine/policy identity, and canonical finding counts. Duplicate/missing IDs, malformed/trailing JSON, truncation, invalid statuses, limits, and process failures cause withholding. Private-key findings block the whole event; all other recognized credentials redact through the engine's own range handling.
+The protected scan protocol uses opaque request/segment IDs and statuses `ok`, `blocked`, or `failed`. Its configuration extension binds an exact immutable configuration and opaque revision; mismatched revision/custom-type replies are invalid. The previous published version used protocol 1 and policy `credentials-alpha1`. Successful replies must contain exactly the requested segment set, pinned engine/policy identity, and canonical finding counts. Duplicate/missing IDs, malformed/trailing JSON, truncation, invalid statuses, limits, and process failures cause withholding. Private-key findings block the whole event; all other recognized credentials redact through the engine's own range handling.
 
 Configured limits: 262,144 UTF-8 input bytes, 256 segments, 1,000 findings, 2,097,152 response bytes, four pending protected helper calls, 2,000 ms including process startup, and 100 recent safe records. These are bounds, not latency guarantees.
 

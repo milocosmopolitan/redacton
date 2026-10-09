@@ -11,7 +11,7 @@ Powered by **[Redact Secret](https://github.com/redact-secret/redact-secret)**, 
 
 ## Install in two minutes
 
-Have **Claude Code and Node.js 22** installed on **macOS Apple Silicon**. The verified combination is Claude Code **2.1.294** and Node **22.16.0**; other platforms, host versions and Desktop have not been qualified.
+Have **Claude Code and Node.js 22** installed on **macOS Apple Silicon**. The verified combination is Claude Code **2.1.294** and Node **22.16.0**; other platforms, host versions and Desktop have not been qualified. Required follow-on support targets macOS x64, Linux x64/ARM64 and Windows x64/WSL; those targets are not supported by this installer.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/milocosmopolitan/redacton/main/scripts/install.sh | bash
@@ -32,8 +32,12 @@ New, resumed and branched CLI sessions start with protection requested **ON**. R
 | --- | --- |
 | `/redacton` | Request protection for subsequent supported operations. |
 | `/redactoff` | Bypass scans for subsequent operations in this session. |
+| `/redact:status` | Show cached readiness, coverage, rules and recent outcomes. |
+| `/redact:config`, `/redact:add-rule`, `/redact:remove-rule` | Manage custom formats through local forms. |
 
-Commands take no arguments. Running operations keep the policy they started with. OFF displays a prompt-area warning: **⚠ Redacton OFF — credential protection disabled**.
+**Commands take no arguments. Never paste secrets, patterns or test text into slash-command arguments; the host can store them before local rejection.** Running operations keep the policy they started with. OFF displays a prompt-area warning: **⚠ Redacton OFF — credential protection disabled**.
+
+Custom rules use guided token formats or assignment names. Validate, inspect synthetic sample outcomes, then explicitly Apply session; personal/project saving and portable import/export are separate actions. **Confirm the form has keyboard focus before typing, and close it before ordinary chat. Never enter actual credential values as rule definitions.** See [configuration and scope](docs/CONFIGURATION.md).
 
 ## Know the boundaries
 

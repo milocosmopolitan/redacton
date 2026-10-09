@@ -11,7 +11,7 @@ import {
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-const root = resolve('artifacts/redacton-alpha-1');
+const root = resolve('artifacts/redacton-0.1.0');
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function files(dir, prefix = '') {
   const result = [];
@@ -32,6 +32,8 @@ await mkdir(root, { recursive: true });
 for (const path of [
   '.claude-plugin/plugin.json',
   'hooks',
+  'commands',
+  'helper/src/config.ts',
   'mod',
   'helper/dist',
   'helper/README.md',
@@ -70,7 +72,7 @@ await writeFile(
   `${JSON.stringify(runtimeLock, null, 2)}\n`,
 );
 runtimePackage.redactonArtifact = {
-  classification: 'evaluation-only',
+  classification: 'qualified-terminal',
   prebuilt: true,
   development: 'Use the source repository for build and test commands.',
 };
@@ -78,17 +80,6 @@ await writeFile(
   join(root, 'package.json'),
   `${JSON.stringify(runtimePackage, null, 2)}\n`,
 );
-await mkdir(join(root, 'qualification'), { recursive: true });
-for (const path of ['PILOT_PLAN.md']) {
-  try {
-    await lstat(resolve('qualification', path));
-  } catch (error) {
-    if (error.code === 'ENOENT') continue;
-    throw error;
-  }
-  await mkdir(join(root, 'qualification', path, '..'), { recursive: true });
-  await cp(resolve('qualification', path), join(root, 'qualification', path));
-}
 await mkdir(join(root, 'node_modules/@redact-secret'), { recursive: true });
 for (const name of (
   await readdir(resolve('node_modules/@redact-secret'))
@@ -110,9 +101,9 @@ await writeFile(
     )
   ).join('\n')}\n`,
 );
-const archive = resolve('artifacts/redacton-alpha-1-evaluation.tar.gz');
+const archive = resolve('artifacts/redacton-0.1.0.tar.gz');
 // Normalize archive metadata so identical file bytes produce identical archives.
-const python = `import gzip,tarfile,pathlib,sys\nroot=pathlib.Path(sys.argv[1]); target=sys.argv[2]\nwith open(target,'wb') as raw:\n with gzip.GzipFile(filename='',mode='wb',fileobj=raw,mtime=0) as gz:\n  with tarfile.open(fileobj=gz,mode='w',format=tarfile.PAX_FORMAT) as tar:\n   for path in sorted(root.rglob('*')):\n    if not path.is_file(): continue\n    info=tar.gettarinfo(str(path),arcname='redacton-alpha-1/'+path.relative_to(root).as_posix()); info.uid=info.gid=0; info.uname=info.gname=''; info.mtime=0; info.mode=0o644; info.pax_headers={}\n    with path.open('rb') as data: tar.addfile(info,data)\n`;
+const python = `import gzip,tarfile,pathlib,sys\nroot=pathlib.Path(sys.argv[1]); target=sys.argv[2]\nwith open(target,'wb') as raw:\n with gzip.GzipFile(filename='',mode='wb',fileobj=raw,mtime=0) as gz:\n  with tarfile.open(fileobj=gz,mode='w',format=tarfile.PAX_FORMAT) as tar:\n   for path in sorted(root.rglob('*')):\n    if not path.is_file(): continue\n    info=tar.gettarinfo(str(path),arcname='redacton-0.1.0/'+path.relative_to(root).as_posix()); info.uid=info.gid=0; info.uname=info.gname=''; info.mtime=0; info.mode=0o644; info.pax_headers={}\n    with path.open('rb') as data: tar.addfile(info,data)\n`;
 const result = spawnSync(
   'rtk',
   ['proxy', 'python3', '-c', python, root, archive],
@@ -122,13 +113,13 @@ if (result.status !== 0) throw new Error('ARCHIVE_BUILD_FAILED');
 const hash = digest(await readFile(archive));
 await writeFile(
   resolve('artifacts/SHA256SUMS'),
-  `${hash}  redacton-alpha-1-evaluation.tar.gz\n`,
+  `${hash}  redacton-0.1.0.tar.gz\n`,
 );
 console.log(
   JSON.stringify({
-    artifact: 'redacton-alpha-1-evaluation.tar.gz',
+    artifact: 'redacton-0.1.0.tar.gz',
     sha256: hash,
     files: list.length,
-    classification: 'evaluation-only',
+    classification: 'qualified-terminal',
   }),
 );

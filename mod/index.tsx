@@ -11,13 +11,30 @@ import {
   rebuildPrompt,
   rebuildToolResult,
 } from './adapters/text.ts';
+import {
+  type ActiveConfiguration,
+  ConfigController,
+  effectiveConfiguration,
+  removeRule,
+  sharedNamesAction,
+  type TokenRule,
+} from './config.ts';
+import {
+  candidateConfiguration,
+  candidateDocument,
+  freshForm,
+  populateForm,
+  type RuleForm,
+} from './form.ts';
 import type { HelperRequest, HelperResponse } from './protocol.ts';
 import {
   LIMITS,
   makeRequest,
   POLICY_ID,
+  utf8Bytes,
   validateProcessResponse,
 } from './protocol.ts';
+import { ImportReviewController, SavedSettingsController } from './settings.ts';
 import type { OperationSnapshot, SessionState } from './state.ts';
 import {
   createSessionState,
@@ -26,13 +43,27 @@ import {
   setReadiness,
   snapshot,
 } from './state.ts';
+import {
+  type StorageRequest,
+  type StorageResponse,
+  type TransferResponse,
+  validateStorageResponse,
+  validateTransferResponse,
+} from './storage.ts';
+import { removalView, statusView } from './view.ts';
 
 interface Runtime {
   sequence: number;
   pending: number;
+  observedAt: number | null;
+  personalLoad: 'pending' | 'ready' | 'failed';
+  settingsCode: string;
+  generation: number;
+  personalPromise: Promise<void> | null;
 }
 interface OperationSlot {
   captured: OperationSnapshot;
+  config: ActiveConfiguration;
   controller: SessionState;
   trusted: TrustedToolResult | null;
 }
@@ -46,24 +77,37 @@ async function runHelper(
   runtime: Runtime,
 ): Promise<HelperResponse> {
   if (signal?.aborted) return { status: 'failed', errorCode: 'CANCELLED' };
+  const payload = JSON.stringify(request);
+  if (utf8Bytes(payload) > LIMITS.inputBytes)
+    return { status: 'failed', errorCode: 'INPUT_LIMIT' };
   if (runtime.pending >= LIMITS.pending)
     return { status: 'failed', errorCode: 'QUEUE_SATURATED' };
   runtime.pending += 1;
   try {
     const result = await $.process.run(
       ['node', `${$.plugin.root}/helper/dist/index.js`],
-      { stdin: JSON.stringify(request), timeoutMs: LIMITS.timeoutMs },
+      { stdin: payload, timeoutMs: LIMITS.timeoutMs },
     );
     if (signal?.aborted) return { status: 'failed', errorCode: 'CANCELLED' };
     const response = validateProcessResponse(result, request);
-    if (response.status !== 'ok') {
+    if (
+      response.status === 'failed' &&
+      (request.operation === 'sanitize' || request.operation === 'self-check')
+    ) {
+      runtime.observedAt = Date.now();
       setReadiness(controller, 'unavailable');
       $.ui.invalidate('ui.render');
     }
     return response;
   } catch {
-    setReadiness(controller, 'unavailable');
-    $.ui.invalidate('ui.render');
+    if (
+      request.operation === 'sanitize' ||
+      request.operation === 'self-check'
+    ) {
+      setReadiness(controller, 'unavailable');
+      runtime.observedAt = Date.now();
+      $.ui.invalidate('ui.render');
+    }
     return { status: 'failed', errorCode: 'HELPER_UNAVAILABLE' };
   } finally {
     runtime.pending -= 1;
@@ -74,14 +118,18 @@ async function checkReadiness(
   $: EngineInterface,
   controller: SessionState,
   runtime: Runtime,
+  config: ActiveConfiguration,
 ): Promise<void> {
-  if (!controller.requestedProtection) return;
+  if (!controller.requestedProtection || runtime.personalLoad !== 'ready')
+    return;
+  const generation = runtime.generation;
   setReadiness(controller, 'loading');
   const response = await runHelper(
     $,
     controller,
     {
-      protocolVersion: 1,
+      protocolVersion: 2,
+      config,
       requestId: `check-${++runtime.sequence}`,
       operation: 'self-check',
       policyId: POLICY_ID,
@@ -89,8 +137,134 @@ async function checkReadiness(
     undefined,
     runtime,
   );
+  if (runtime.generation !== generation) return;
   setReadiness(controller, response.status === 'ok' ? 'ready' : 'unavailable');
+  runtime.observedAt = Date.now();
   $.ui.invalidate('ui.render');
+}
+
+async function runSettings(
+  $: EngineInterface,
+  request: StorageRequest,
+  runtime: Runtime,
+): Promise<StorageResponse> {
+  const payload = JSON.stringify(request);
+  if (utf8Bytes(payload) > LIMITS.inputBytes)
+    return { ok: false, code: 'INPUT_LIMIT' };
+  if (runtime.pending >= LIMITS.pending)
+    return { ok: false, code: 'QUEUE_SATURATED' };
+  runtime.pending += 1;
+  try {
+    const result = await $.process.run(
+      ['node', `${$.plugin.root}/helper/dist/index.js`],
+      { stdin: payload, timeoutMs: LIMITS.timeoutMs },
+    );
+    return validateStorageResponse(result, request);
+  } catch {
+    return { ok: false, code: 'SETTINGS_UNAVAILABLE' };
+  } finally {
+    runtime.pending -= 1;
+  }
+}
+
+async function runTransfer(
+  $: EngineInterface,
+  request: StorageRequest,
+  runtime: Runtime,
+): Promise<TransferResponse> {
+  const payload = JSON.stringify(request);
+  if (utf8Bytes(payload) > LIMITS.inputBytes)
+    return { ok: false, code: 'INPUT_LIMIT' };
+  if (runtime.pending >= LIMITS.pending)
+    return { ok: false, code: 'QUEUE_SATURATED' };
+  runtime.pending += 1;
+  try {
+    const result = await $.process.run(
+      ['node', `${$.plugin.root}/helper/dist/index.js`],
+      { stdin: payload, timeoutMs: LIMITS.timeoutMs },
+    );
+    return validateTransferResponse(result, request);
+  } catch {
+    return { ok: false, code: 'SETTINGS_UNAVAILABLE' };
+  } finally {
+    runtime.pending -= 1;
+  }
+}
+
+async function loadPersonal(
+  $: EngineInterface,
+  controller: SessionState,
+  config: ConfigController,
+  settings: SavedSettingsController,
+  runtime: Runtime,
+): Promise<void> {
+  if (!controller.requestedProtection || runtime.personalLoad !== 'pending')
+    return;
+  const generation = runtime.generation;
+  const initial = config.snapshot();
+  const response = await runSettings(
+    $,
+    {
+      protocolVersion: 2,
+      requestId: `personal-${++runtime.sequence}`,
+      operation: 'load-config',
+      policyId: POLICY_ID,
+      storage: { scope: 'personal', approved: true },
+    },
+    runtime,
+  );
+  if (runtime.generation !== generation) return;
+  if (response.ok) {
+    settings.observe(response.settings);
+    if (initial.scope !== 'session')
+      config.replaceApproved(
+        response.settings.document,
+        'personal',
+        initial.revision,
+      );
+    runtime.personalLoad = 'ready';
+    runtime.settingsCode = '';
+  } else {
+    runtime.personalLoad = 'failed';
+    runtime.settingsCode = response.code;
+    setReadiness(controller, 'unavailable');
+    runtime.observedAt = Date.now();
+  }
+  $.ui.invalidate('ui.render');
+}
+
+async function ensurePersonal(
+  $: EngineInterface,
+  controller: SessionState,
+  config: ConfigController,
+  settings: SavedSettingsController,
+  runtime: Runtime,
+): Promise<void> {
+  if (runtime.personalPromise) {
+    await runtime.personalPromise;
+    return;
+  }
+  if (runtime.personalLoad !== 'pending' || !controller.requestedProtection)
+    return;
+  const work = loadPersonal($, controller, config, settings, runtime);
+  runtime.personalPromise = work;
+  try {
+    await work;
+  } finally {
+    if (runtime.personalPromise === work) runtime.personalPromise = null;
+  }
+}
+
+async function focusLocal(
+  $: EngineInterface,
+  target: { requestId: string; key: string },
+): Promise<boolean> {
+  try {
+    const response = await $.ui.focus(target);
+    return !response.deny;
+  } catch {
+    return false;
+  }
 }
 
 function operationKey(event: {
@@ -134,6 +308,7 @@ async function sanitizeSelectedTool<E extends ToolCallInput>(
   const request = makeRequest(
     `tool-${++runtime.sequence}`,
     extraction.segments,
+    slot.config,
   );
   if (!request) {
     slot.trusted = { deny: 'REDACTON_INPUT_LIMIT' };
@@ -158,13 +333,41 @@ async function sanitizeSelectedTool<E extends ToolCallInput>(
   return trusted;
 }
 
+function freshFormWithNotice(notice: string): RuleForm {
+  const form = freshForm();
+  form.notice = notice;
+  return form;
+}
+
 export function register(on: On) {
   let state = createSessionState('initial');
-  const runtime = { sequence: 0, pending: 0 };
+  const runtime: Runtime = {
+    sequence: 0,
+    pending: 0,
+    observedAt: null,
+    personalLoad: 'pending',
+    settingsCode: '',
+    generation: 0,
+    personalPromise: null,
+  };
+  let config = new ConfigController();
+  let form: RuleForm = freshForm();
+  let paneOpen = false;
+  const settings = new SavedSettingsController();
+  const imports = new ImportReviewController();
   const slots = new Map<string, OperationSlot>();
 
   on('session.start', async ($, e, next) => {
+    paneOpen = false;
     state = createSessionState(await $.session.id());
+    config = new ConfigController();
+    settings.resetSession();
+    imports.cancel();
+    runtime.observedAt = null;
+    runtime.generation += 1;
+    runtime.personalPromise = null;
+    runtime.personalLoad = 'pending';
+    runtime.settingsCode = '';
     await $.command.register({
       name: 'redacton',
       description: 'Request local credential protection for new operations',
@@ -174,12 +377,24 @@ export function register(on: On) {
       description:
         'Disable credential protection for new operations in this session',
     });
-    await checkReadiness($, state, runtime);
+    await ensurePersonal($, state, config, settings, runtime);
+    await checkReadiness($, state, runtime, config.snapshot());
     return next(e);
   }).catch((_$, e, next) => next(e));
 
   // The host does not reload this module on restore/branch; clear OFF at session.end.
-  on('session.end', (_$, e, next) => {
+  on('session.end', ($, e, next) => {
+    config = new ConfigController();
+    settings.resetSession();
+    imports.cancel();
+    runtime.observedAt = null;
+    runtime.generation += 1;
+    runtime.personalPromise = null;
+    runtime.personalLoad = 'pending';
+    runtime.settingsCode = '';
+    paneOpen = false;
+    form = freshForm();
+    $.ui.close({ id: 'redact-config' });
     state = createSessionState(`reset-${++runtime.sequence}`);
     return next(e);
   });
@@ -197,7 +412,8 @@ export function register(on: On) {
     if (e.args?.trim()) return { text: 'Redacton commands take no arguments.' };
     requestProtection(state, true);
     $.ui.invalidate('ui.render');
-    await checkReadiness($, state, runtime);
+    await ensurePersonal($, state, config, settings, runtime);
+    await checkReadiness($, state, runtime, config.snapshot());
     return {
       text:
         state.readiness === 'ready'
@@ -208,12 +424,1077 @@ export function register(on: On) {
     text: 'Redacton ON. Protection unavailable; selected content will be withheld.',
   }));
 
+  on(
+    'command.run',
+    {
+      command: [
+        'redact:status',
+        'redact:config',
+        'redact:add-rule',
+        'redact:remove-rule',
+      ],
+    },
+    async ($, e) => {
+      if (e.args.trim())
+        return {
+          text: 'Redacton local commands take no arguments. Never put credentials in slash commands.',
+        };
+      if (e.command === 'redact:status') {
+        const view = statusView(state, config.snapshot(), runtime.observedAt);
+        return {
+          text: `Redacton ${view.protection} · Protect ${view.readiness}. Saved settings: ${runtime.settingsCode || runtime.personalLoad}. Cached observation: ${view.observedAt === null ? 'not observed' : new Date(view.observedAt).toISOString()}. This is not a health check.\nConfiguration ${view.revision} · source ${view.source} · scope ${view.scope} · ${view.customRuleCount} custom rules: ${view.ruleIds.join(', ') || 'none'}.\nSupported: prompt text/context, Read text, Bash stdout/stderr. Excluded: other tools/MCP, tool arguments, binary/image/audio, PII, existing history. Zero findings does not mean safe content.\nRecent: ${view.recent.map((item) => `${item.code}:${item.count}`).join(', ') || 'none'}`,
+        };
+      }
+      imports.cancel();
+      form = freshForm();
+      form.mode =
+        e.command === 'redact:add-rule'
+          ? 'add'
+          : e.command === 'redact:remove-rule'
+            ? 'remove'
+            : 'config';
+      await $.prompt.fill({ text: '', mode: 'replace' });
+      const placement = await $.ui.open({
+        id: 'redact-config',
+        title: 'Redacton local configuration',
+        focus: true,
+        closeOnEscape: true,
+        rows: 32,
+      });
+      paneOpen = placement.isPlaced;
+      if (!placement.isPlaced) await $.ui.close({ id: 'redact-config' });
+      if (placement.isPlaced)
+        await focusLocal($, {
+          requestId: 'redact-config',
+          key:
+            form.mode === 'add'
+              ? 'rule-id'
+              : form.mode === 'remove' && config.snapshot().rules[0]
+                ? `remove-${config.snapshot().rules[0]?.id}`
+                : 'edit-add',
+        });
+      return {
+        text: placement.isPlaced
+          ? 'Redacton local panel opened. No credentials or exact secret values. Changes require validation, synthetic preview, then Apply.'
+          : 'Redacton local panel unavailable on this surface. Configuration unchanged.',
+      };
+    },
+  ).catch(() => ({ text: 'REDACTON_LOCAL_COMMAND_UNAVAILABLE' }));
+
+  on('ui.close', ($, e, next) => {
+    if (e.id !== 'redact-config') return next(e);
+    if (form.durableBusy && e.origin.kind !== 'unload') {
+      form.notice =
+        'Operation in progress. Wait for completion; a durable write may already commit.';
+      $.ui.invalidate('ui.render');
+      return { value: undefined };
+    }
+    const draft = config.currentDraft();
+    if (draft) config.cancel(draft.token);
+    imports.cancel();
+    paneOpen = false;
+    form = freshForm();
+    return next(e);
+  });
+
+  on(
+    'ui.render',
+    { component: 'Pane', requestId: 'redact-config', surface: 'terminal' },
+    ($, e) => {
+      const { Box, Text, Input, Button } = $.ui.resolve(e);
+      const owner = config;
+      const formOwner = form;
+      const sessionOwner = state;
+      const active = owner.snapshot();
+      const draft = owner.currentDraft();
+      const update = () => $.ui.invalidate('ui.render');
+      const changed = () => {
+        if (!validOwner()) return;
+        if (draft) owner.cancel(draft.token);
+        form.notice = '';
+        update();
+      };
+      const close = async () => {
+        if (!validOwner()) return;
+        if (form.durableBusy) {
+          form.notice =
+            'Operation in progress. Wait for completion; a durable save may already commit.';
+          update();
+          return;
+        }
+        if (draft) owner.cancel(draft.token);
+        form = freshForm();
+        try {
+          await $.ui.close({ id: 'redact-config' });
+          paneOpen = false;
+          imports.cancel();
+          form = freshForm();
+        } catch {
+          form.notice = 'LOCAL_PANEL_CLOSE_UNAVAILABLE';
+          update();
+        }
+      };
+      const validOwner = () =>
+        owner === config &&
+        sessionOwner === state &&
+        formOwner === form &&
+        paneOpen;
+      return (
+        <Box flexDirection="column">
+          <Text>
+            {!state.requestedProtection
+              ? '⚠ Redacton OFF · credentials may reach Claude unchanged'
+              : `Redacton ON · Protect ${state.readiness} · Partial coverage`}
+          </Text>
+          <Text>{`Configuration ${active.revision} · ${active.source}/${active.scope} · custom rules ${active.rules.length}. Built-in credentials remain enabled. Zero findings is not a safety guarantee.`}</Text>
+          <Text>
+            {e.props.isFocused
+              ? 'Local panel has keyboard focus. Type only in labeled fields.'
+              : 'WARNING: local panel is not focused. Do not type patterns into the composer. Focus this panel before editing.'}
+          </Text>
+          <Text>
+            Local declarative patterns only. Never enter a credential or exact
+            secret. Nothing is saved until an explicit Save.
+          </Text>
+          <Text>{runtime.settingsCode}</Text>
+          <Box>
+            <Button
+              key="edit-add"
+              onPress={() => {
+                if (!validOwner()) return;
+                form = freshForm();
+                form.mode = 'add';
+                update();
+              }}
+            >
+              Add rule
+            </Button>
+            <Button
+              key="edit-remove"
+              onPress={async () => {
+                if (!validOwner()) return;
+                form = freshForm();
+                form.mode = 'remove';
+                update();
+                const first = active.rules[0];
+                if (first)
+                  await focusLocal($, {
+                    requestId: 'redact-config',
+                    key: `remove-${first.id}`,
+                  });
+              }}
+            >
+              Remove rule
+            </Button>
+            <Button
+              key="revert"
+              onPress={async () => {
+                if (!validOwner() || form.busy) return;
+                const result = owner.revert(active.revision);
+                form.notice = result.ok
+                  ? 'Reverted to previous configuration.'
+                  : result.code;
+                if (result.ok && state.requestedProtection)
+                  await checkReadiness($, sessionOwner, runtime, result.config);
+                if (!validOwner()) return;
+                update();
+              }}
+            >
+              Revert
+            </Button>
+            <Button key="cancel" onPress={close}>
+              Cancel / close
+            </Button>
+          </Box>
+          <Text>{form.notice}</Text>
+          <Text>
+            Editing any inherited custom rule creates a session override.
+            Personal and project files stay unchanged until explicit scoped
+            Save.
+          </Text>
+          <Box>
+            {active.rules.map((rule) => (
+              <Button
+                key={`edit-${rule.id}`}
+                onPress={async () => {
+                  if (!validOwner() || form.busy) return;
+                  const pending = owner.currentDraft();
+                  if (pending) owner.cancel(pending.token);
+                  form = populateForm(rule);
+                  form.notice = `Editing custom rule ${rule.id} as a session override. Validate, preview, Apply.`;
+                  update();
+                  await focusLocal($, {
+                    requestId: 'redact-config',
+                    key: 'rule-id',
+                  });
+                }}
+              >{`Edit ${rule.id}`}</Button>
+            ))}
+          </Box>
+          {form.mode === 'add' ? (
+            <Box flexDirection="column">
+              <Button
+                key="kind"
+                onPress={() => {
+                  if (!validOwner()) return;
+                  form.kind = form.kind === 'token' ? 'names' : 'token';
+                  form.namesGroupAction = false;
+                  if (form.kind === 'names')
+                    form.action = sharedNamesAction(active);
+                  changed();
+                }}
+              >{`Kind: ${form.kind}`}</Button>
+              <Input
+                key="rule-id"
+                label="Rule ID"
+                value={form.id}
+                autoFocus
+                onInput={(value) => {
+                  if (!validOwner()) return;
+                  form.id = value;
+                  changed();
+                }}
+                onSubmit={async (value) => {
+                  if (!validOwner()) return;
+                  form.id = value;
+                  changed();
+                  update();
+                  await focusLocal($, {
+                    requestId: 'redact-config',
+                    key: form.kind === 'token' ? 'prefix' : 'names',
+                  });
+                }}
+              />
+              <Button
+                key="action"
+                onPress={() => {
+                  if (!validOwner()) return;
+                  form.action = form.action === 'redact' ? 'block' : 'redact';
+                  if (form.kind === 'names') form.namesGroupAction = true;
+                  changed();
+                }}
+              >
+                {form.kind === 'names'
+                  ? `Action for ALL assignment-name rules: ${form.action}`
+                  : `Action: ${form.action}`}
+              </Button>
+              {form.kind === 'token' ? (
+                <Box flexDirection="column">
+                  <Input
+                    key="prefix"
+                    label="Public prefix, 3–64 bytes"
+                    value={form.prefix}
+                    onInput={(value) => {
+                      if (!validOwner()) return;
+                      form.prefix = value;
+                      changed();
+                    }}
+                    onSubmit={async (value) => {
+                      if (!validOwner()) return;
+                      form.prefix = value;
+                      changed();
+                      update();
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: 'length',
+                      });
+                    }}
+                  />
+                  <Button
+                    key="alphabet"
+                    onPress={() => {
+                      if (!validOwner()) return;
+                      const alphabets: readonly TokenRule['alphabet'][] = [
+                        'alnum',
+                        'alnum-dash',
+                        'alnum-dash-dot',
+                        'upper-alnum',
+                        'digit',
+                        'lower-hex',
+                        'base64-body',
+                      ];
+                      form.alphabet =
+                        alphabets[
+                          (alphabets.indexOf(form.alphabet) + 1) %
+                            alphabets.length
+                        ] ?? 'alnum';
+                      changed();
+                    }}
+                  >{`Alphabet: ${form.alphabet}`}</Button>
+                  <Button
+                    key="run-kind"
+                    onPress={() => {
+                      if (!validOwner()) return;
+                      form.runKind =
+                        form.runKind === 'exact' ? 'at-least' : 'exact';
+                      changed();
+                    }}
+                  >{`Length mode: ${form.runKind}`}</Button>
+                  <Input
+                    key="length"
+                    label="Run length, 1–4096"
+                    value={form.length}
+                    onInput={(value) => {
+                      if (!validOwner()) return;
+                      form.length = value;
+                      changed();
+                    }}
+                    onSubmit={async (value) => {
+                      if (!validOwner()) return;
+                      form.length = value;
+                      changed();
+                      update();
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: 'build',
+                      });
+                    }}
+                  />
+                  <Button
+                    key="specificity"
+                    onPress={() => {
+                      if (!validOwner()) return;
+                      form.specificity =
+                        form.specificity === 'contextual'
+                          ? 'entropy'
+                          : 'contextual';
+                      changed();
+                    }}
+                  >{`Specificity: ${form.specificity}`}</Button>
+                  <Button
+                    key="validator"
+                    onPress={() => {
+                      if (!validOwner()) return;
+                      form.validator =
+                        form.validator === 'none'
+                          ? 'trailing-lower-hex'
+                          : 'none';
+                      changed();
+                    }}
+                  >{`Validator: ${form.validator}`}</Button>
+                </Box>
+              ) : (
+                <Box flexDirection="column">
+                  <Input
+                    key="names"
+                    label="Assignment names, comma-separated (max 32)"
+                    value={form.names}
+                    onInput={(value) => {
+                      if (!validOwner()) return;
+                      form.names = value;
+                      changed();
+                    }}
+                    onSubmit={async (value) => {
+                      if (!validOwner()) return;
+                      form.names = value;
+                      changed();
+                      update();
+                      await focusLocal($, {
+                        requestId: 'redact-config',
+                        key: 'build',
+                      });
+                    }}
+                  />
+                  <Text>
+                    Names share one action across all name rules. Names apply
+                    only to contextual assignments. A name is not an exact
+                    value.
+                  </Text>
+                </Box>
+              )}
+              <Button
+                key="build"
+                onPress={async () => {
+                  if (!validOwner()) return;
+                  const document = candidateDocument(active, form);
+                  if (!document) {
+                    form.notice = 'INVALID_CANDIDATE';
+                    update();
+                    return;
+                  }
+                  owner.begin(document);
+                  form.notice = form.editingId
+                    ? 'Atomic edit draft ready. Validate with the pinned core parser.'
+                    : 'Draft ready. Validate with the pinned core parser.';
+                  update();
+                  await focusLocal($, {
+                    requestId: 'redact-config',
+                    key: 'validate',
+                  });
+                }}
+              >
+                Create draft
+              </Button>
+            </Box>
+          ) : null}
+          {form.mode === 'remove' ? (
+            <Box flexDirection="column">
+              {active.rules.map((rule) => {
+                const impact = removalView(active, rule.id);
+                return (
+                  <Box key={rule.id}>
+                    <Text>{`${rule.id} · ${rule.kind} · ${rule.action} · ${active.source}/${active.scope}`}</Text>
+                    <Button
+                      key={`remove-${rule.id}`}
+                      onPress={async () => {
+                        if (!validOwner()) return;
+                        if (!impact?.removable) {
+                          form.notice =
+                            'Inherited rule is read-only. Choose Copy to session to deliberately override.';
+                          update();
+                          return;
+                        }
+                        const document = removeRule(active, rule.id);
+                        if (document) {
+                          owner.begin(document);
+                          form.notice =
+                            'Removal draft. Other rules and built-ins may still match. Validate, preview, then Apply.';
+                          update();
+                          await focusLocal($, {
+                            requestId: 'redact-config',
+                            key: 'validate',
+                          });
+                        }
+                      }}
+                    >
+                      Select removal
+                    </Button>
+                  </Box>
+                );
+              })}
+              <Button
+                key="copy-session"
+                onPress={() => {
+                  if (!validOwner()) return;
+                  owner.begin(active, 'session');
+                  form.notice =
+                    'Explicit session copy. Validate, preview, Apply, then select removal.';
+                  update();
+                }}
+              >
+                Copy to session override
+              </Button>
+            </Box>
+          ) : null}
+          <Text>
+            Personal defaults restore at session boundaries. Project settings
+            require explicit load and trust. Precedence: session override,
+            trusted project, personal, defaults. Project trust lasts this
+            session.
+          </Text>
+          <Box>
+            {(['personal', 'project'] as const).map((scope) => (
+              <Button
+                key={`load-${scope}`}
+                onPress={async () => {
+                  if (!validOwner() || form.busy) return;
+                  if (!state.requestedProtection) {
+                    form.notice = 'TURN_ON_TO_LOAD';
+                    update();
+                    return;
+                  }
+                  form.busy = true;
+                  const storage =
+                    scope === 'project'
+                      ? {
+                          scope,
+                          approved: false,
+                          projectRoot: await $.session.root(),
+                        }
+                      : { scope, approved: true };
+                  const response = await runSettings(
+                    $,
+                    {
+                      protocolVersion: 2,
+                      requestId: `load-${++runtime.sequence}`,
+                      operation: 'load-config',
+                      policyId: POLICY_ID,
+                      storage,
+                    },
+                    runtime,
+                  );
+                  if (validOwner()) {
+                    if (response.ok) {
+                      settings.observe(response.settings);
+                      if (scope === 'personal') {
+                        runtime.personalLoad = 'ready';
+                        runtime.settingsCode = '';
+                        const effective = effectiveConfiguration(
+                          settings.approvedLayers(),
+                        );
+                        if (active.scope !== 'session') {
+                          const changed = owner.replaceApproved(
+                            effective.document,
+                            effective.source,
+                            active.revision,
+                          );
+                          if (changed.ok)
+                            await checkReadiness(
+                              $,
+                              sessionOwner,
+                              runtime,
+                              changed.config,
+                            );
+                        }
+                        form.notice =
+                          'Personal settings loaded. Session overrides keep precedence.';
+                      } else {
+                        form.mode = 'project';
+                        form.notice =
+                          'Project candidate loaded, NOT active. Review rule definitions then Trust exact revision.';
+                      }
+                    } else form.notice = response.code;
+                    form.busy = false;
+                    update();
+                  }
+                }}
+              >{`Load ${scope}`}</Button>
+            ))}
+          </Box>
+          {form.mode === 'project' ? (
+            <Box flexDirection="column">
+              {(() => {
+                const reviewed = settings.loadedConfiguration('project');
+                return reviewed ? (
+                  <Box flexDirection="column">
+                    <Text>{`Project candidate ${reviewed.revision}. Not active before trust. ${reviewed.document.rules.length} rules.`}</Text>
+                    {reviewed.document.rules.map((rule) => (
+                      <Text key={`review-${rule.id}`}>
+                        {rule.kind === 'token'
+                          ? `${rule.id}: ${rule.action}, token prefix ${rule.prefix}, alphabet ${rule.alphabet}, ${rule.run.kind} ${rule.run.length}, ${rule.specificity}, validator ${rule.validator}`
+                          : `${rule.id}: ${rule.action}, assignment names ${rule.names.join(', ')}`}
+                      </Text>
+                    ))}
+                    <Button
+                      key="trust-project"
+                      onPress={async () => {
+                        if (!validOwner() || form.busy) return;
+                        if (!state.requestedProtection) {
+                          form.notice = 'TURN_ON_TO_TRUST';
+                          update();
+                          return;
+                        }
+                        if (
+                          !settings.approveProject(
+                            reviewed.identity,
+                            reviewed.revision,
+                            reviewed.document,
+                          )
+                        ) {
+                          form.notice = 'PROJECT_REVIEW_STALE';
+                          update();
+                          return;
+                        }
+                        const effective = effectiveConfiguration(
+                          settings.approvedLayers(),
+                        );
+                        if (active.scope !== 'session') {
+                          const changed = owner.replaceApproved(
+                            effective.document,
+                            effective.source,
+                            active.revision,
+                          );
+                          if (changed.ok)
+                            await checkReadiness(
+                              $,
+                              sessionOwner,
+                              runtime,
+                              changed.config,
+                            );
+                        }
+                        form.notice =
+                          'Exact reviewed project configuration trusted for this session. Session override keeps precedence.';
+                        update();
+                      }}
+                    >
+                      Trust reviewed project
+                    </Button>
+                  </Box>
+                ) : null;
+              })()}
+            </Box>
+          ) : null}
+          <Box>
+            {(['personal', 'project'] as const).map((scope) => (
+              <Button
+                key={`save-${scope}`}
+                onPress={async () => {
+                  if (!validOwner() || form.busy) return;
+                  if (!state.requestedProtection) {
+                    form.notice = 'TURN_ON_TO_SAVE';
+                    update();
+                    return;
+                  }
+                  const loaded = settings.loadedConfiguration(scope);
+                  const intent = settings.beginSave(scope, active);
+                  if (!loaded || !intent) {
+                    form.notice = 'LOAD_AND_REVIEW_SCOPE_FIRST';
+                    update();
+                    return;
+                  }
+                  form.busy = true;
+                  form.durableBusy = true;
+                  form.notice =
+                    'Explicit save in progress. Closing does not undo an already dispatched durable write.';
+                  update();
+                  const storage = {
+                    scope,
+                    approved: true,
+                    ...(scope === 'project'
+                      ? { projectRoot: await $.session.root() }
+                      : {}),
+                    expectedRevision: intent.expectedRevision,
+                    expectedIdentity: intent.identity,
+                    expectedDocument: loaded.document,
+                    document: intent.document,
+                  };
+                  const response = await runSettings(
+                    $,
+                    {
+                      protocolVersion: 2,
+                      requestId: `save-${++runtime.sequence}`,
+                      operation: 'save-config',
+                      policyId: POLICY_ID,
+                      storage,
+                    },
+                    runtime,
+                  );
+                  if (validOwner()) {
+                    form.notice =
+                      response.ok &&
+                      settings.saved(intent.token, response.settings)
+                        ? `Saved ${scope}. Current session override retained.`
+                        : response.ok
+                          ? 'STALE_SAVE_RECEIPT'
+                          : response.code;
+                    form.busy = false;
+                    form.durableBusy = false;
+                    update();
+                  }
+                }}
+              >{`Save ${scope}`}</Button>
+            ))}
+          </Box>
+          <Box>
+            {(['personal', 'project'] as const).map((scope) => (
+              <Button
+                key={`reset-${scope}`}
+                onPress={() => {
+                  if (!validOwner() || form.busy) return;
+                  form.resetScope = scope;
+                  form.notice = `Confirm reset of ${scope} only. Removes additional saved rules; built-ins and other scopes remain. Existing session override remains.`;
+                  update();
+                }}
+              >{`Reset ${scope}`}</Button>
+            ))}
+          </Box>
+          {form.resetScope ? (
+            <Button
+              key="confirm-reset"
+              onPress={async () => {
+                if (!validOwner() || form.busy) return;
+                if (!state.requestedProtection) {
+                  form.notice = 'TURN_ON_TO_RESET';
+                  update();
+                  return;
+                }
+                const scope = form.resetScope;
+                if (!scope) return;
+                const loaded = settings.loadedConfiguration(scope);
+                const intent = settings.beginSave(scope, {
+                  schemaVersion: 1,
+                  rules: [],
+                });
+                if (!loaded || !intent) {
+                  form.notice = 'LOAD_AND_REVIEW_SCOPE_FIRST';
+                  update();
+                  return;
+                }
+                form.busy = true;
+                form.durableBusy = true;
+                const storage = {
+                  scope,
+                  approved: true,
+                  ...(scope === 'project'
+                    ? { projectRoot: await $.session.root() }
+                    : {}),
+                  expectedRevision: intent.expectedRevision,
+                  expectedIdentity: intent.identity,
+                  expectedDocument: loaded.document,
+                };
+                const response = await runSettings(
+                  $,
+                  {
+                    protocolVersion: 2,
+                    requestId: `reset-${++runtime.sequence}`,
+                    operation: 'reset-config',
+                    policyId: POLICY_ID,
+                    storage,
+                  },
+                  runtime,
+                );
+                if (validOwner()) {
+                  if (
+                    response.ok &&
+                    settings.saved(intent.token, response.settings)
+                  ) {
+                    const effective = effectiveConfiguration(
+                      settings.approvedLayers(),
+                    );
+                    if (active.scope !== 'session') {
+                      const changed = owner.replaceApproved(
+                        effective.document,
+                        effective.source,
+                        active.revision,
+                      );
+                      if (changed.ok)
+                        await checkReadiness(
+                          $,
+                          sessionOwner,
+                          runtime,
+                          changed.config,
+                        );
+                    }
+                    form.notice = `Reset ${scope} only. Built-ins retained.`;
+                  } else
+                    form.notice = response.ok
+                      ? 'STALE_RESET_RECEIPT'
+                      : response.code;
+                  form.busy = false;
+                  form.durableBusy = false;
+                  form.resetScope = null;
+                  update();
+                }
+              }}
+            >{`Confirm reset ${form.resetScope}`}</Button>
+          ) : null}
+          <Text>
+            Portable transfer files contain rule definitions only. Export may
+            reveal internal names or prefixes. Review before sharing; no
+            history, OFF state, matched input is exported. Never put actual
+            credentials in rule fields; unknown sensitive values cannot always
+            be recognized.
+          </Text>
+          <Box>
+            {(['personal', 'project'] as const).map((scope) => (
+              <Button
+                key={`import-${scope}`}
+                onPress={async () => {
+                  if (!validOwner() || form.busy) return;
+                  if (!state.requestedProtection) {
+                    form.notice = 'TURN_ON_TO_IMPORT';
+                    update();
+                    return;
+                  }
+                  form.busy = true;
+                  const storage =
+                    scope === 'project'
+                      ? {
+                          scope,
+                          approved: false,
+                          projectRoot: await $.session.root(),
+                        }
+                      : { scope, approved: true };
+                  const response = await runTransfer(
+                    $,
+                    {
+                      protocolVersion: 2,
+                      requestId: `import-${++runtime.sequence}`,
+                      operation: 'import-config',
+                      policyId: POLICY_ID,
+                      storage,
+                    },
+                    runtime,
+                  );
+                  if (validOwner()) {
+                    if (response.ok) {
+                      imports.stage(
+                        scope,
+                        response.transfer.identity,
+                        response.transfer.document,
+                      );
+                      form.notice =
+                        'Imported candidate only. Review definitions, then explicitly use reviewed import. Active configuration unchanged.';
+                    } else form.notice = response.code;
+                    form.busy = false;
+                    update();
+                  }
+                }}
+              >{`Import ${scope}`}</Button>
+            ))}
+          </Box>
+          {(() => {
+            const imported = imports.snapshot();
+            return imported ? (
+              <Box flexDirection="column">
+                <Text>{`Imported ${imported.scope} candidate ${imported.token}, inactive until reviewed and applied.`}</Text>
+                {imported.document.rules.map((rule) => (
+                  <Text key={`import-review-${rule.id}`}>
+                    {rule.kind === 'token'
+                      ? `${rule.id}: ${rule.action}, prefix ${rule.prefix}, ${rule.alphabet}, ${rule.run.kind} ${rule.run.length}, ${rule.specificity}, ${rule.validator}`
+                      : `${rule.id}: ${rule.action}, names ${rule.names.join(', ')}`}
+                  </Text>
+                ))}
+                <Button
+                  key="approve-import"
+                  onPress={() => {
+                    if (!validOwner() || form.busy) return;
+                    if (!imports.approve(imported.token, imported.document)) {
+                      form.notice = 'STALE_IMPORT_REVIEW';
+                      update();
+                      return;
+                    }
+                    const document = imports.approved(imported.token);
+                    if (document) {
+                      owner.begin(document, 'session');
+                      form.notice =
+                        'Reviewed import staged as a session draft. Validate, synthetic preview, Apply. Saving is separate.';
+                    }
+                    update();
+                  }}
+                >
+                  Use reviewed import draft
+                </Button>
+              </Box>
+            ) : null;
+          })()}
+          <Box>
+            {(['personal', 'project'] as const).map((scope) => (
+              <Button
+                key={`export-${scope}`}
+                onPress={async () => {
+                  if (!validOwner() || form.busy) return;
+                  if (!state.requestedProtection) {
+                    form.notice = 'TURN_ON_TO_EXPORT';
+                    update();
+                    return;
+                  }
+                  const approved =
+                    scope === 'personal' ||
+                    settings.approvedLayers().project !== undefined;
+                  if (!approved) {
+                    form.notice = 'LOAD_AND_TRUST_PROJECT_FIRST';
+                    update();
+                    return;
+                  }
+                  const loaded = settings.loadedConfiguration(scope);
+                  if (!loaded) {
+                    form.notice = 'LOAD_SCOPE_FIRST';
+                    update();
+                    return;
+                  }
+                  form.busy = true;
+                  form.durableBusy = true;
+                  const storage = {
+                    scope,
+                    approved,
+                    expectedIdentity: loaded.identity,
+                    ...(scope === 'project'
+                      ? { projectRoot: await $.session.root() }
+                      : {}),
+                    document: {
+                      schemaVersion: 1 as const,
+                      rules: active.rules,
+                    },
+                  };
+                  const response = await runTransfer(
+                    $,
+                    {
+                      protocolVersion: 2,
+                      requestId: `export-${++runtime.sequence}`,
+                      operation: 'export-config',
+                      policyId: POLICY_ID,
+                      storage,
+                    },
+                    runtime,
+                  );
+                  if (validOwner()) {
+                    form.notice = response.ok
+                      ? `Exported ${scope} transfer.json rule definitions only. Review before sharing.`
+                      : response.code;
+                    form.busy = false;
+                    form.durableBusy = false;
+                    update();
+                  }
+                }}
+              >{`Export ${scope} transfer file`}</Button>
+            ))}
+          </Box>
+          <Text>{form.notice}</Text>
+          <Text>
+            {draft
+              ? `Draft ${draft.token} · ${draft.stage} · base ${draft.baseRevision}`
+              : 'No pending draft'}
+          </Text>
+          <Box>
+            <Button
+              key="validate"
+              onPress={async () => {
+                if (
+                  !validOwner() ||
+                  !draft ||
+                  draft.stage !== 'editing' ||
+                  form.busy
+                )
+                  return;
+                if (!state.requestedProtection) {
+                  form.notice = 'TURN_ON_TO_VALIDATE';
+                  update();
+                  return;
+                }
+                form.busy = true;
+                const response = await runHelper(
+                  $,
+                  sessionOwner,
+                  {
+                    protocolVersion: 2,
+                    requestId: `validate-${++runtime.sequence}`,
+                    operation: 'validate-config',
+                    policyId: POLICY_ID,
+                    config: candidateConfiguration(draft.document, draft.token),
+                  },
+                  undefined,
+                  runtime,
+                );
+                if (validOwner()) {
+                  const accepted = owner.validated(
+                    draft.token,
+                    response.status === 'ok' && response.validated === true,
+                  );
+                  form.notice = accepted
+                    ? 'Core validation passed. Run synthetic preview.'
+                    : response.status === 'ok'
+                      ? 'STALE_DRAFT'
+                      : response.errorCode;
+                  form.busy = false;
+                  update();
+                  if (accepted)
+                    await focusLocal($, {
+                      requestId: 'redact-config',
+                      key: 'preview',
+                    });
+                }
+              }}
+            >
+              Validate
+            </Button>
+            <Button
+              key="preview"
+              onPress={async () => {
+                if (
+                  !validOwner() ||
+                  !draft ||
+                  draft.stage !== 'validated' ||
+                  form.busy
+                )
+                  return;
+                if (!state.requestedProtection) {
+                  form.notice = 'TURN_ON_TO_PREVIEW';
+                  update();
+                  return;
+                }
+                form.busy = true;
+                const response = await runHelper(
+                  $,
+                  sessionOwner,
+                  {
+                    protocolVersion: 2,
+                    requestId: `preview-${++runtime.sequence}`,
+                    operation: 'preview',
+                    policyId: POLICY_ID,
+                    config: candidateConfiguration(draft.document, draft.token),
+                  },
+                  undefined,
+                  runtime,
+                );
+                if (validOwner()) {
+                  const accepted = owner.previewed(
+                    draft.token,
+                    response.status === 'ok' && response.outcomes !== undefined,
+                  );
+                  form.notice =
+                    accepted && response.status === 'ok'
+                      ? `Synthetic sample outcomes: ${response.outcomes?.map((item) => `${item.id}: positive ${item.positive.action}, negative ${item.negative.action}`).join('; ') || 'empty rules, built-ins retained'}. Samples only, not an accuracy guarantee. Inspect nonmatches and built-in overlap before Apply. No real values scanned.`
+                      : response.status === 'ok'
+                        ? 'STALE_DRAFT'
+                        : response.errorCode;
+                  form.busy = false;
+                  update();
+                  if (accepted)
+                    await focusLocal($, {
+                      requestId: 'redact-config',
+                      key: 'apply',
+                    });
+                }
+              }}
+            >
+              Synthetic preview
+            </Button>
+            <Button
+              key="apply"
+              onPress={async () => {
+                if (!validOwner() || !draft || form.busy) return;
+                const result = owner.apply(draft.token);
+                form.notice = result.ok
+                  ? 'Applied to session. New operations capture this revision. Existing operations retain their revision.'
+                  : result.code;
+                form = freshFormWithNotice(form.notice);
+                const appliedForm = form;
+                form.busy = result.ok && state.requestedProtection;
+                if (result.ok && state.requestedProtection)
+                  await checkReadiness($, sessionOwner, runtime, result.config);
+                if (
+                  owner !== config ||
+                  sessionOwner !== state ||
+                  form !== appliedForm ||
+                  !paneOpen
+                )
+                  return;
+                form.busy = false;
+                update();
+                if (result.ok)
+                  await focusLocal($, {
+                    requestId: 'redact-config',
+                    key: result.config.rules.length ? 'edit-remove' : 'revert',
+                  });
+              }}
+            >
+              Apply session
+            </Button>
+            <Button
+              key="reset"
+              onPress={() => {
+                if (!validOwner()) return;
+                owner.begin({ schemaVersion: 1, rules: [] }, 'session');
+                form.notice =
+                  'Reset draft removes additional rules, built-ins remain. Validate, preview, Apply.';
+                update();
+              }}
+            >
+              Reset session rules
+            </Button>
+          </Box>
+        </Box>
+      );
+    },
+  );
+
   on('prompt.submit', async ($, e, next) => {
+    if (paneOpen && e.origin.kind === 'composer')
+      return { drop: 'REDACTON_CLOSE_LOCAL_PANEL_BEFORE_PROMPT' };
+    if (
+      typeof e.text === 'string' &&
+      /^\/redact:(?:status|config|add-rule|remove-rule)(?:\s|$)/.test(e.text)
+    )
+      return { drop: 'REDACTON_LOCAL_COMMAND_UNAVAILABLE' };
     const controller = state;
     const captured = snapshot(controller);
+    if (captured.requestedProtection)
+      await ensurePersonal($, controller, config, settings, runtime);
+    const capturedConfig = config.snapshot();
     if (!captured.requestedProtection) return next(e);
     if (captured.readiness === 'loading')
-      await checkReadiness($, controller, runtime);
+      await checkReadiness($, controller, runtime, capturedConfig);
     if (captured.readiness !== 'ready' && controller.readiness !== 'ready')
       return { drop: 'REDACTON_UNAVAILABLE' };
     const extraction = extractPrompt(e);
@@ -222,6 +1503,7 @@ export function register(on: On) {
     const request = makeRequest(
       `prompt-${++runtime.sequence}`,
       extraction.segments,
+      capturedConfig,
     );
     if (!request) return { drop: 'REDACTON_INPUT_LIMIT' };
     const response = await runHelper(
@@ -241,18 +1523,29 @@ export function register(on: On) {
   }).catch(() => ({ drop: 'REDACTON_WITHHELD' }));
 
   // Never trust next's returned envelope: a skipped inner hook can return original data.
-  on('tool.call', { tool: ['Read', 'Bash'] }, async (_$, e, next) => {
+  on('tool.call', { tool: ['Read', 'Bash'] }, async ($, e, next) => {
     const controller = state;
     const captured = snapshot(controller);
+    if (captured.requestedProtection)
+      await ensurePersonal($, controller, config, settings, runtime);
     const key = operationKey(e);
     if (key === null) return { deny: 'REDACTON_UNSUPPORTED_SHAPE' };
     if (slots.has(key)) return { deny: 'REDACTON_DUPLICATE_OPERATION' };
     if (captured.requestedProtection && slots.size >= LIMITS.pending)
       return { deny: 'REDACTON_QUEUE_SATURATED' };
-    const slot: OperationSlot = { captured, controller, trusted: null };
+    const slot: OperationSlot = {
+      captured,
+      config: config.snapshot(),
+      controller,
+      trusted: null,
+    };
     slots.set(key, slot);
     try {
-      if (captured.requestedProtection && captured.readiness !== 'ready')
+      if (
+        captured.requestedProtection &&
+        captured.readiness !== 'ready' &&
+        controller.readiness !== 'ready'
+      )
         return { deny: 'REDACTON_UNAVAILABLE' };
       const answer = await next(e);
       if (!captured.requestedProtection) return answer;

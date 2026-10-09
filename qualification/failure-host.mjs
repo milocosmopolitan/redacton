@@ -32,9 +32,11 @@ await mkdir(plugin);
 for (const name of [
   '.claude-plugin/plugin.json',
   'hooks',
+  'commands',
+  'helper/src/config.ts',
   'mod',
   'helper/dist',
-  'node_modules',
+  'node_modules/@redact-secret',
 ]) {
   await mkdir(join(plugin, name, '..'), { recursive: true });
   await cp(resolve(name), join(plugin, name), { recursive: true });
@@ -54,7 +56,10 @@ const helper = (
 ) => `import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 let input=''; for await (const chunk of process.stdin) input+=chunk;
 const request=JSON.parse(input);
-const response={protocolVersion:1,requestId:request.requestId,status:'ok',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',artifact:'addon',findingCounts:{}};
+if(request.operation==='load-config') {
+ process.stdout.write(JSON.stringify({protocolVersion:2,requestId:request.requestId,status:'ok',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',artifact:'addon',settings:{scope:request.storage.scope,identity:'0'.repeat(64),revision:'absent',document:{schemaVersion:1,rules:[]}}}));process.exit(0);
+}
+const response={protocolVersion:request.protocolVersion,requestId:request.requestId,status:'ok',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',artifact:'addon',findingCounts:{},...(request.config?{configRevision:request.config.revision}:{})};
 if(request.operation==='sanitize') response.segments=request.segments.map(segment=>({id:segment.id,text:segment.text}));
 const tool=request.operation==='sanitize' && request.segments.some(segment=>segment.id==='stdout');
 const fault=tool || (${JSON.stringify(mode)}==='prompt-invalid' && request.operation==='sanitize');
@@ -66,7 +71,7 @@ if(fault) {
  if(mode==='policy-failure') {
   const engine=await import('@redact-secret/core'); await engine.initialize();
   try { engine.scanAndRedact(request.segments[0].text,{policy:{evaluate(){throw new Error('SYNTHETIC_POLICY_FAILURE')}}}); }
-  catch { process.stdout.write(JSON.stringify({protocolVersion:1,requestId:request.requestId,status:'failed',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',errorCode:'POLICY_FAILURE'})); process.exit(0); }
+  catch { process.stdout.write(JSON.stringify({protocolVersion:request.protocolVersion,configRevision:request.config?.revision,requestId:request.requestId,status:'failed',engineVersion:'0.1.0-beta.14',policyId:'credentials-alpha1',errorCode:'POLICY_FAILURE'})); process.exit(0); }
   process.exit(1);
  }
  if(mode==='mismatch-id') response.requestId='unrelated';
@@ -206,6 +211,7 @@ try {
             HOME: process.env.HOME,
             CLAUDE_CONFIG_DIR: join(dir, 'config'),
             ANTHROPIC_API_KEY: 'synthetic-local-only',
+            REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
             ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
             CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
           },

@@ -1,4 +1,5 @@
 import { canonicalTypes } from './canonical-types.ts';
+import type { ActiveConfiguration } from './config.ts';
 import {
   isNonnegativeInteger,
   hasOnlyKeys as keys,
@@ -10,7 +11,8 @@ export interface Segment {
   text: string;
 }
 interface RequestIdentity {
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
+  config?: ActiveConfiguration;
   requestId: string;
   policyId: string;
 }
@@ -21,12 +23,35 @@ export interface SanitizeRequest extends RequestIdentity {
 export interface SelfCheckRequest extends RequestIdentity {
   operation: 'self-check';
 }
-export type HelperRequest = SanitizeRequest | SelfCheckRequest;
+export interface ConfigurationRequest extends RequestIdentity {
+  operation: 'validate-config' | 'preview';
+  config: ActiveConfiguration;
+}
+export type HelperRequest =
+  | SanitizeRequest
+  | SelfCheckRequest
+  | ConfigurationRequest;
+export interface PreviewOutcome {
+  id: string;
+  positive: {
+    detected: boolean;
+    action: 'redact' | 'block' | 'none';
+    findingCounts: Record<string, number>;
+  };
+  negative: {
+    detected: boolean;
+    action: 'redact' | 'block' | 'none';
+    findingCounts: Record<string, number>;
+  };
+}
 export type HelperResponse =
   | { status: 'failed' | 'blocked'; errorCode: string }
   | {
       status: 'ok';
       segments?: Segment[];
+      validated?: true;
+      outcomes?: PreviewOutcome[];
+      configRevision?: string;
       findingCounts: Record<string, number>;
       count: number;
       artifact: 'addon' | 'wasm';
@@ -58,6 +83,9 @@ const codes = new Set([
   'TIMEOUT',
   'INVALID_JSON',
   'INPUT_FAILURE',
+  'RULE_BLOCKED',
+  'INVALID_CONFIG',
+  'NAMES_ACTION_CONFLICT',
 ]);
 
 export function utf8Bytes(text: string): number {
@@ -83,6 +111,7 @@ export function utf8Bytes(text: string): number {
 export function makeRequest(
   requestId: unknown,
   segments: unknown,
+  config?: ActiveConfiguration,
 ): SanitizeRequest | null {
   if (
     typeof requestId !== 'string' ||
@@ -109,13 +138,17 @@ export function makeRequest(
     bytes += utf8Bytes(segment.text);
     if (bytes > LIMITS.inputBytes) return null;
   }
-  return {
-    protocolVersion: 1,
+  const request: SanitizeRequest = {
+    protocolVersion: config ? 2 : 1,
+    ...(config ? { config } : {}),
     requestId,
     operation: 'sanitize',
     policyId: POLICY_ID,
     segments: validated,
   };
+  return utf8Bytes(JSON.stringify(request)) <= LIMITS.inputBytes
+    ? request
+    : null;
 }
 
 export function validateProcessResponse(
@@ -150,7 +183,9 @@ export function validateProcessResponse(
   }
   if (
     !plain(value) ||
-    value.protocolVersion !== 1 ||
+    value.protocolVersion !== request.protocolVersion ||
+    (request.protocolVersion === 2 &&
+      (!request.config || value.configRevision !== request.config.revision)) ||
     value.requestId !== request.requestId ||
     value.engineVersion !== ENGINE_VERSION ||
     value.policyId !== POLICY_ID
@@ -165,12 +200,119 @@ export function validateProcessResponse(
         'engineVersion',
         'policyId',
         'errorCode',
+        ...(request.protocolVersion === 2 ? ['configRevision'] : []),
       ]) ||
       typeof value.errorCode !== 'string' ||
       !codes.has(value.errorCode)
     )
       return invalid;
     return { status: value.status, errorCode: value.errorCode };
+  }
+  const boundKeys = request.protocolVersion === 2 ? ['configRevision'] : [];
+  const allowedTypes = new Set(typeSet);
+  for (const rule of request.config?.rules ?? [])
+    if (rule.kind === 'token') allowedTypes.add(rule.id);
+  function counts(input: unknown): Record<string, number> | null {
+    if (!plain(input)) return null;
+    const result: Record<string, number> = {};
+    let total = 0;
+    for (const [type, count] of Object.entries(input)) {
+      if (!allowedTypes.has(type) || !isNonnegativeInteger(count)) return null;
+      total += count;
+      if (total > LIMITS.findings) return null;
+      result[type] = count;
+    }
+    return result;
+  }
+  if (
+    request.operation === 'validate-config' ||
+    request.operation === 'preview'
+  ) {
+    if (
+      value.status !== 'ok' ||
+      (value.artifact !== 'addon' && value.artifact !== 'wasm')
+    )
+      return invalid;
+    const common = [
+      'protocolVersion',
+      'requestId',
+      'status',
+      'engineVersion',
+      'policyId',
+      'artifact',
+      ...boundKeys,
+    ];
+    if (request.operation === 'validate-config') {
+      if (
+        !keys(value, [...common, 'validated', 'ruleCount']) ||
+        value.validated !== true ||
+        value.ruleCount !== request.config.rules.length
+      )
+        return invalid;
+      return {
+        status: 'ok',
+        validated: true,
+        findingCounts: {},
+        count: 0,
+        artifact: value.artifact,
+        configRevision: request.config.revision,
+      };
+    }
+    if (
+      !keys(value, [...common, 'outcomes']) ||
+      !Array.isArray(value.outcomes) ||
+      value.outcomes.length !== request.config.rules.length
+    )
+      return invalid;
+    const expected = new Map(
+      request.config.rules.map((rule) => [rule.id, rule]),
+    );
+    const outcomes: PreviewOutcome[] = [];
+    let total = 0;
+    function preview(input: unknown): PreviewOutcome['positive'] | null {
+      if (
+        !keys(input, ['detected', 'action', 'findingCounts']) ||
+        typeof input.detected !== 'boolean' ||
+        (input.action !== 'redact' &&
+          input.action !== 'block' &&
+          input.action !== 'none')
+      )
+        return null;
+      const findingCounts = counts(input.findingCounts);
+      if (!findingCounts) return null;
+      const count = Object.values(findingCounts).reduce((a, b) => a + b, 0);
+      total += count;
+      if (
+        total > LIMITS.findings ||
+        input.detected !== count > 0 ||
+        (input.action === 'none') !== (count === 0)
+      )
+        return null;
+      return { detected: input.detected, action: input.action, findingCounts };
+    }
+    for (const outcome of value.outcomes) {
+      if (
+        !keys(outcome, ['id', 'positive', 'negative']) ||
+        typeof outcome.id !== 'string'
+      )
+        return invalid;
+      const rule = expected.get(outcome.id);
+      if (!rule) return invalid;
+      expected.delete(outcome.id);
+      const positive = preview(outcome.positive),
+        negative = preview(outcome.negative);
+      if (!positive || !negative) return invalid;
+      outcomes.push({ id: outcome.id, positive, negative });
+    }
+    if (expected.size) return invalid;
+    return {
+      status: 'ok',
+      outcomes,
+      findingCounts: {},
+      count: total,
+      artifact: value.artifact,
+      configRevision: request.config.revision,
+    };
   }
   if (
     value.status !== 'ok' ||
@@ -183,6 +325,7 @@ export function validateProcessResponse(
       'artifact',
       'segments',
       'findingCounts',
+      ...boundKeys,
     ]) ||
     (value.artifact !== 'addon' && value.artifact !== 'wasm') ||
     !plain(value.findingCounts)
@@ -191,7 +334,7 @@ export function validateProcessResponse(
   const findingCounts: Record<string, number> = {};
   let total = 0;
   for (const [type, count] of Object.entries(value.findingCounts)) {
-    if (!typeSet.has(type) || !isNonnegativeInteger(count)) return invalid;
+    if (!allowedTypes.has(type) || !isNonnegativeInteger(count)) return invalid;
     findingCounts[type] = count;
     total += count;
     if (total > LIMITS.findings) return invalid;
@@ -199,7 +342,7 @@ export function validateProcessResponse(
   const segments: Segment[] = [];
   if (request.operation === 'self-check') {
     if ('segments' in value || total !== 0) return invalid;
-  } else {
+  } else if (request.operation === 'sanitize') {
     if (
       !Array.isArray(value.segments) ||
       value.segments.length !== request.segments.length
@@ -217,12 +360,13 @@ export function validateProcessResponse(
       segments.push({ id: segment.id, text: segment.text });
     }
     if (expected.size) return invalid;
-  }
+  } else return invalid;
   return {
     status: 'ok',
     ...(request.operation === 'sanitize' ? { segments } : {}),
     findingCounts,
     count: total,
     artifact: value.artifact,
+    ...(request.config ? { configRevision: request.config.revision } : {}),
   };
 }

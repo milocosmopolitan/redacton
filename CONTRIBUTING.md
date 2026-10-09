@@ -19,6 +19,10 @@ node scripts/verify-artifact.mjs
 
 TypeScript belongs in `mod/` and `helper/src/`. SDK calls stay in Mod registration; imported adapters receive data only. Scanning stays in the separate pinned-engine helper. Do not add a Rust detector/helper merely to duplicate the engine's existing native/WASM implementation.
 
+## Configuration changes
+
+Read [the configuration contract](docs/CONFIGURATION.md). Shared schema/controllers stay pure; privileged compilation and persistence stay in the helper. Test stale validation/preview callbacks, exact config-revision binding, both in-flight change directions, project trust, failed writes, scope identity changes and last-rule removal. Status must dispatch zero helper calls, including startup or settings initialization. Use synthetic previews; never treat a passing sample as accuracy evidence.
+
 ## Security and verification
 
 Capture ON/OFF at operation start. OFF dispatches no helper. Selected ON failures withhold content through a fixed response under the documented host/guard conditions; never return cached originals from catches. Rebuild allowlisted envelopes and strip aliases. Preserve permissions, execute a tool once, and leave authentication/tool arguments unchanged. Send sensitive input through stdin only.
@@ -33,7 +37,7 @@ node qualification/host-boundary-host.mjs guarded-catch-failure
 node qualification/host-boundary-host.mjs unguarded-catch-failure
 ```
 
-The last mode intentionally reproduces the host's raw fallback and must not be treated as a protection pass. The terminal UI runner requires a temporary pyte installation. These are actual-host regressions, not replacements for unit checks; disclose any path that was not rerun.
+The last mode intentionally reproduces the host's raw fallback and must not be treated as a protection pass. The terminal UI runner requires a temporary pyte installation. Reproduce configuration keyboard flows with `qualification/normal-ui.py --ux --plugin-root <extracted-artifact> --fixture-root <source-checkout>` with `REDACTON_UI_COLUMNS=140` and `80` (40 rows); record visible preview/Apply/Revert feedback, OFF dispatch counts, model requests and scoped synthetic-marker persistence separately. These are actual-host regressions, not replacements for unit checks; disclose any path that was not rerun.
 
 Published package evidence is immutable at its release tag. Refactoring source does not requalify that artifact or unrelated platforms. Run the relevant current checks before making new compatibility claims. Desktop, other platforms and an independent production-accuracy claim require their own evidence.
 
@@ -42,3 +46,7 @@ Published package evidence is immutable at its release tag. Refactoring source d
 A PR should state the user-visible change, related issue, validation and material limitations. Update current docs when behavior changes; preserve historical evidence through tag links rather than duplicating generated reports in main. Do not claim a planned feature or pilot result merely because code exists.
 
 Distribution requires a prebuilt clean artifact, exact pins/lockfile, MIT/dependency notices, private reporting, compatibility evidence and explicit beta exclusions. Vulnerabilities use [private GitHub reporting](https://github.com/milocosmopolitan/redacton/security/advisories/new); conduct concerns use [the documented maintainer email](CODE_OF_CONDUCT.md). Public issues are not confidential. Never send outreach without authorization.
+
+## Versioning and distribution
+
+For each artifact, manually align `.claude-plugin/plugin.json` and the internal `package.json` version, currently 0.1.0. They are independent metadata files; there is no automatic version-bump synchronization. The npm package is private and unpublished. GitHub release archives are the delivery channel; creating a Git tag alone does not publish an archive. The installer pins a release archive and checksum, so users rerun it to install an updated pinned release. Preserve immutable historical tags and assets.

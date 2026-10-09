@@ -75,6 +75,7 @@ const env = {
   HOME: process.env.HOME,
   CLAUDE_CONFIG_DIR: join(dir, 'config'),
   ANTHROPIC_API_KEY: 'synthetic-local-only',
+  REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
   ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`,
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 };
@@ -170,7 +171,7 @@ try {
     exitCode !== 0 ||
     phase !== 4 ||
     captures.length !== 1 ||
-    initialCalls !== 1 ||
+    initialCalls !== 2 ||
     finalCalls !== initialCalls ||
     !report.rawInOffModelUserContent ||
     !report.immediateOffWarning ||
