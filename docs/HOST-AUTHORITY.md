@@ -54,9 +54,34 @@ Read-only status and enabling/recovery must remain available. Disabling and
 opening mutation controls require an explicit host user origin where enforceable;
 Apply/import/save remain local form actions rather than command arguments.
 
-SDK test events prove handler behavior only. Actual host tests must separately
-exercise direct `/redactoff`, model Skill/tool attempts, plugin/skill attempts and
-prompt-injected instructions, while measuring state and model requests. No claim
+The generated SDK for 2.1.294 and 2.1.295 declares `CommandRunInput.origin` as
+the host's `PromptOrigin`: composer is the local user gesture, SDK is automation,
+and plugin calls are stamped plugin. `CommandRunArgs` omits origin. Reducing
+protection or opening settings now accepts only the exact composer origin;
+unknown, SDK, bridge, schedule and plugin origins are refused with a fixed local
+message. Remote bridge mutation is intentionally not qualified. `/redacton` and
+cached status remain usable from automation. No slash arguments are echoed.
+
+On **2.1.295 / Node 22.16.0 / macOS ARM64**, `authority-host.mjs` verified SDK
+OFF denial and ON recovery with zero model requests. The actual companion's
+nested plugin command attempts, including a forged composer origin object, were
+refused. The SDK documents refusal inside a hook the turn waits on, so this
+particular result does not prove an idle plugin call reached Redacton's guard.
+A companion `command.run` hook rewriting `next`'s SDK origin to composer was
+rejected by the actual host. SDK regressions separately verify plugin/SDK guards
+against OFF and each management entry without helper dispatch or pane opening.
+
+`routes-host.mjs model-off` and `model-config` forced model Skill attempts to run
+`redactoff` and `redact:config` after synthetic injected instructions claimed user
+authority. Each produced a tool error, two loopback model requests and no Mod
+management execution. This does not prove arbitrary future host tools cannot
+invoke commands. Actual terminal 140- and 80-column OFF/ON tests confirmed immediate and
+persistent OFF warnings while typing and after a Bash operation, clearing on ON,
+restoring on repeated OFF, and zero model requests. The OFF CI gate requires both
+terminal cases. Automation OFF probes are explicitly
+labelled SDK denial, never evidence of actual user OFF.
+
+SDK test events prove handler behavior only. No claim
 of protection against arbitrary host plugins, an OS process editing files, or a
 host that falsifies provenance follows from an origin guard. Permission checks
 and external-tool authentication remain the host's responsibility.

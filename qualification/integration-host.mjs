@@ -237,8 +237,14 @@ try {
           name,
           exitCode: response.exitCode,
           local: response.output.includes(
-            name === 'status' ? 'Cached observation:' : 'Redacton local panel',
+            name === 'status'
+              ? 'Cached observation:'
+              : 'REDACTON_USER_ACTION_REQUIRED',
           ),
+          userActionRequired:
+            name === 'status'
+              ? false
+              : response.output.includes('REDACTON_USER_ACTION_REQUIRED'),
           invalidExitCode: invalid.exitCode,
           argumentsRejected: invalid.output.includes('take no arguments'),
           argumentEcho:
@@ -402,6 +408,11 @@ try {
       completed: output.includes('SPIKE_DONE'),
       stderrPresent: Boolean(error),
       offWarning: output.includes('Warning: Redacton is OFF.'),
+      automationDisableDenied:
+        mode === 'off'
+          ? output.includes('REDACTON_USER_ACTION_REQUIRED')
+          : null,
+      offEvidence: mode === 'off' ? 'sdk-denial-only' : null,
       transcriptFiles: storage.length,
       rawStoredPrompt,
       rawStoredToolArguments,
@@ -437,7 +448,7 @@ try {
       toolResults.length !== (local || mode === 'prompt' ? 0 : 1) ||
       (local
         ? !output.includes(
-            mode === 'off' ? 'Warning: Redacton is OFF.' : 'Redacton ON.',
+            mode === 'off' ? 'REDACTON_USER_ACTION_REQUIRED' : 'Redacton ON.',
           )
         : !output.includes('SPIKE_DONE'))
     )
