@@ -17,7 +17,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 import * as engine from '@redact-secret/core';
 import { CANONICAL_TYPES, POLICY_ID } from '../helper/dist/core.js';
-import { SettingsStore, sameFileIdentity } from '../helper/dist/storage.js';
+import {
+  pathSnapshotMatches,
+  SettingsStore,
+  sameFileIdentity,
+} from '../helper/dist/storage.js';
 
 await engine.initialize();
 const empty = { schemaVersion: 1, rules: [] };
@@ -119,11 +123,8 @@ test('owned regular-file lstat and fstat identities agree without exposing files
           (value) => value.size === 1n,
         ),
         inodeEqual: before.ino === opened.ino && after.ino === opened.ino,
-        normalizedDeviceEqual:
-          (before.dev & 0xffffffffn) === (opened.dev & 0xffffffffn) &&
-          (after.dev & 0xffffffffn) === (opened.dev & 0xffffffffn),
-        beforeIdentity: sameFileIdentity(before, opened),
-        afterIdentity: sameFileIdentity(after, opened),
+        beforeIdentity: await pathSnapshotMatches(path, before, opened),
+        afterIdentity: await pathSnapshotMatches(path, after, opened),
       };
       const sign = (value) =>
         value < 0n ? 'negative' : value === 0n ? 'zero' : 'positive';
@@ -133,6 +134,9 @@ test('owned regular-file lstat and fstat identities agree without exposing files
         JSON.stringify({
           code: 'STORAGE_IDENTITY_PROBE',
           ...checks,
+          normalizedDeviceEqual:
+            (before.dev & 0xffffffffn) === (opened.dev & 0xffffffffn) &&
+            (after.dev & 0xffffffffn) === (opened.dev & 0xffffffffn),
           beforeDeviceSign: sign(before.dev),
           openedDeviceSign: sign(opened.dev),
           afterDeviceSign: sign(after.dev),
@@ -143,6 +147,149 @@ test('owned regular-file lstat and fstat identities agree without exposing files
       );
     } finally {
       await handle.close();
+    }
+  }));
+
+const statWith = (value, changes) =>
+  Object.assign(Object.create(Object.getPrototypeOf(value)), value, changes);
+
+test('zero Windows path device IDs require matching second descriptor identities and close every descriptor', async () =>
+  fixture(async (root) => {
+    const path = join(root, 'descriptor-probe');
+    await writeFile(path, 'x');
+    const original = await fs.open(path, constants.O_RDONLY);
+    const originalStat = await original.stat({ bigint: true });
+    const snapshot = statWith(await fs.lstat(path, { bigint: true }), {
+      dev: 0n,
+    });
+    const savedOpen = fs.open;
+    const savedLstat = fs.lstat;
+    let device = originalStat.dev;
+    let inode = originalStat.ino;
+    let opens = 0;
+    let closes = 0;
+    fs.lstat = async (...args) =>
+      statWith(await savedLstat(...args), { dev: 0n });
+    fs.open = async (...args) => {
+      const handle = await savedOpen(...args);
+      opens += 1;
+      const savedStat = handle.stat.bind(handle);
+      const savedClose = handle.close.bind(handle);
+      handle.stat = async (...options) =>
+        statWith(await savedStat(...options), { dev: device, ino: inode });
+      handle.close = async () => {
+        closes += 1;
+        await savedClose();
+      };
+      return handle;
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        true,
+      );
+      device ^= 1n;
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        false,
+      );
+      device = originalStat.dev;
+      inode = originalStat.ino + 1n;
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        false,
+      );
+      inode = originalStat.ino;
+      device = 0n;
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          statWith(originalStat, { dev: 0n }),
+          65536,
+          false,
+          'win32',
+        ),
+        true,
+      );
+      assert.equal(opens, 4);
+      assert.equal(closes, opens);
+    } finally {
+      fs.open = savedOpen;
+      fs.lstat = savedLstat;
+      syncBuiltinESMExports();
+      await original.close();
+    }
+  }));
+
+test('zero-device verification rejects replacement after the second descriptor opens and closes it', async () =>
+  fixture(async (root) => {
+    const path = join(root, 'descriptor-probe');
+    const replacement = join(root, 'replacement');
+    await writeFile(path, 'x');
+    await writeFile(replacement, 'y');
+    const original = await fs.open(path, constants.O_RDONLY);
+    const originalStat = await original.stat({ bigint: true });
+    const snapshot = statWith(await fs.lstat(path, { bigint: true }), {
+      dev: 0n,
+    });
+    const savedOpen = fs.open;
+    const savedLstat = fs.lstat;
+    let closed = false;
+    fs.lstat = async (...args) =>
+      statWith(await savedLstat(...args), { dev: 0n });
+    fs.open = async (...args) => {
+      const second = await savedOpen(...args);
+      const savedClose = second.close.bind(second);
+      second.close = async () => {
+        closed = true;
+        await savedClose();
+      };
+      await fs.rename(path, join(root, 'retired'));
+      await fs.rename(replacement, path);
+      return second;
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.equal(
+        await pathSnapshotMatches(
+          path,
+          snapshot,
+          originalStat,
+          65536,
+          false,
+          'win32',
+        ),
+        false,
+      );
+      assert.equal(closed, true);
+    } finally {
+      fs.open = savedOpen;
+      fs.lstat = savedLstat;
+      syncBuiltinESMExports();
+      await original.close();
     }
   }));
 

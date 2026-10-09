@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { type BigIntStats, constants } from 'node:fs';
 import {
   link,
   lstat,
@@ -69,6 +69,48 @@ export function sameFileIdentity(
   return left.ino === right.ino && device(left.dev) === device(right.dev);
 }
 
+export async function pathSnapshotMatches(
+  path: string,
+  snapshot: BigIntStats,
+  original: BigIntStats,
+  maxBytes = MAX_BYTES,
+  allowLinks = false,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  const regular = (value: BigIntStats) =>
+    value.isFile() &&
+    !value.isSymbolicLink() &&
+    (allowLinks || value.nlink === 1n) &&
+    value.size <= BigInt(maxBytes);
+  if (!regular(snapshot) || !regular(original)) return false;
+  if (platform !== 'win32' || snapshot.dev !== 0n)
+    return sameFileIdentity(snapshot, original, platform);
+  // Windows path stats can omit the volume ID. Never treat zero as a wildcard:
+  // independently reopen the path and compare two descriptor volume/file IDs.
+  if (
+    snapshot.ino !== original.ino ||
+    !sameFileIdentity(snapshot, snapshot, platform) ||
+    !sameFileIdentity(original, original, platform)
+  )
+    return false;
+  const second = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const secondStat = await second.stat({ bigint: true });
+    if (
+      !regular(secondStat) ||
+      !sameFileIdentity(secondStat, original, platform)
+    )
+      return false;
+    const checked = await lstat(path, { bigint: true });
+    return regular(checked) && sameFileIdentity(checked, snapshot, platform);
+  } finally {
+    await second.close();
+  }
+}
+
 // State and rule bodies are written only here, never to logs, arguments or model context.
 export class SettingsStore {
   constructor(
@@ -104,14 +146,20 @@ export class SettingsStore {
         !stat.isFile() ||
         (!allowLinks && stat.nlink !== 1n) ||
         stat.size > BigInt(maxBytes) ||
-        !sameFileIdentity(stat, before)
+        !(await pathSnapshotMatches(path, before, stat, maxBytes, allowLinks))
       )
         fail('SETTINGS_CORRUPT');
       const openedPath = await lstat(path, { bigint: true });
       if (
         !openedPath.isFile() ||
         openedPath.isSymbolicLink() ||
-        !sameFileIdentity(openedPath, stat)
+        !(await pathSnapshotMatches(
+          path,
+          openedPath,
+          stat,
+          maxBytes,
+          allowLinks,
+        ))
       )
         fail('SETTINGS_CORRUPT');
       const bytes = Buffer.alloc(maxBytes + 1);
@@ -131,7 +179,7 @@ export class SettingsStore {
         size > maxBytes ||
         !after.isFile() ||
         after.isSymbolicLink() ||
-        !sameFileIdentity(after, stat)
+        !(await pathSnapshotMatches(path, after, stat, maxBytes, allowLinks))
       )
         fail('SETTINGS_CORRUPT');
       return new TextDecoder('utf-8', { fatal: true }).decode(
