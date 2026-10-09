@@ -38,9 +38,13 @@ try {
     process.argv.includes('--validate') || process.argv.includes('--types')
       ? ['validate', '--strict', destination]
       : ['test', destination];
-  const result = spawnSync('rtk', ['proxy', 'claude', 'plugin', ...command], {
-    stdio: 'inherit',
-  });
+  const result = spawnSync(
+    process.env.CLAUDE_BINARY ?? 'claude',
+    ['plugin', ...command],
+    {
+      stdio: 'inherit',
+    },
+  );
   process.exitCode = result.status ?? 1;
   if (process.argv.includes('--types') && result.status === 0) {
     const config = join(destination, 'isolated-config');
@@ -57,10 +61,8 @@ try {
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     // Only loading the local command generates SDK declarations; the model endpoint is disabled.
     spawnSync(
-      'rtk',
+      process.env.CLAUDE_BINARY ?? 'claude',
       [
-        'proxy',
-        'claude',
         '-p',
         '/redactoff',
         '--plugin-dir',

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import {
+import fs, {
   mkdir,
   mkdtemp,
   readdir,
@@ -10,6 +10,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -78,10 +79,11 @@ test('atomic CAS persistence survives reload, rejects stale/replayed body and re
     const saved = await save(store, initial);
     assert.notEqual(saved.revision, 'absent');
     assert.deepEqual(await load(store), saved);
-    assert.equal(
-      (await stat(join(root, 'personal/settings.json'))).mode & 0o777,
-      0o600,
-    );
+    if (process.platform !== 'win32')
+      assert.equal(
+        (await stat(join(root, 'personal/settings.json'))).mode & 0o777,
+        0o600,
+      );
     await assert.rejects(save(store, initial), {
       message: 'SETTINGS_CONFLICT',
     });
@@ -259,7 +261,8 @@ test('portable fixed-scope transfers contain declarative document only and impor
     assert.equal(exported.identity, initial.identity);
     const path = join(root, 'personal/transfer.json');
     assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), document);
-    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    if (process.platform !== 'win32')
+      assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.equal((await load(store)).revision, 'absent');
     await mkdir(join(root, 'project/.redacton'));
     await writeFile(
@@ -476,4 +479,71 @@ test('recognized credential literal cannot be saved, exported or imported as con
       { message: 'INVALID_CONFIG' },
     );
     assert.equal((await load(store)).revision, 'absent');
+  }));
+
+test('replacing a checked settings file before open never loads the replacement', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const saved = await save(store, initial);
+    const target = await fs.realpath(join(root, 'personal/settings.json'));
+    const original = await readFile(target, 'utf8');
+    const replacement = join(root, 'replacement.json');
+    await writeFile(replacement, original);
+    const originalOpen = fs.open;
+    let swapped = false;
+    fs.open = async (path, ...args) => {
+      if (path === target && !swapped) {
+        swapped = true;
+        await fs.rename(target, join(root, 'old.json'));
+        await fs.rename(replacement, target);
+      }
+      return originalOpen(path, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(load(store), { message: 'SETTINGS_CORRUPT' });
+      assert.equal(swapped, true);
+    } finally {
+      fs.open = originalOpen;
+      syncBuiltinESMExports();
+    }
+    assert.deepEqual(await load(store), saved);
+  }));
+
+test('replacing a checked settings file with a link is rejected even without nofollow', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    await save(store, initial);
+    const target = await fs.realpath(join(root, 'personal/settings.json'));
+    const moved = join(root, 'moved.json');
+    const originalOpen = fs.open;
+    let swapped = false;
+    let reads = 0;
+    fs.open = async (path, ...args) => {
+      if (path === target && !swapped) {
+        swapped = true;
+        await fs.rename(target, moved);
+        await symlink(moved, target);
+      }
+      if (path === target && typeof args[0] === 'number')
+        args[0] &= ~(constants.O_NOFOLLOW ?? 0);
+      const handle = await originalOpen(path, ...args);
+      if (path === target) {
+        const read = handle.read.bind(handle);
+        handle.read = (...readArgs) => {
+          reads++;
+          return read(...readArgs);
+        };
+      }
+      return handle;
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(load(store), { message: 'SETTINGS_CORRUPT' });
+      assert.equal(swapped, true);
+      assert.equal(reads, 0);
+    } finally {
+      fs.open = originalOpen;
+      syncBuiltinESMExports();
+    }
   }));

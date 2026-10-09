@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { claudeBinary, isolatedPlatformEnvironment } from './host-runtime.mjs';
 
 // Synthetic-only loopback endpoint; no payloads are persisted or printed.
 const dir = await mkdtemp(join(tmpdir(), 'redacton-spike-'));
@@ -97,10 +98,8 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
 try {
   const child = spawn(
-    'rtk',
+    claudeBinary,
     [
-      'proxy',
-      'claude',
       '-p',
       'SPIKE_RAW',
       '--plugin-dir',
@@ -125,8 +124,9 @@ try {
     {
       cwd: dir,
       env: {
+        ...isolatedPlatformEnvironment(dir),
         PATH: process.env.PATH,
-        HOME: process.env.HOME,
+        HOME: dir,
         CLAUDE_CONFIG_DIR: join(dir, 'config'),
         ANTHROPIC_API_KEY: 'synthetic-local-only',
         REDACTON_SETTINGS_ROOT: join(dir, 'settings'),

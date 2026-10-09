@@ -66,13 +66,34 @@ export class SettingsStore {
     maxBytes = MAX_BYTES,
     allowLinks = false,
   ): Promise<string> {
-    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = await lstat(path, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      (!allowLinks && before.nlink !== 1n) ||
+      before.size > BigInt(maxBytes)
+    )
+      fail('SETTINGS_CORRUPT');
+    const handle = await open(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    );
     try {
-      const stat = await handle.stat();
+      const stat = await handle.stat({ bigint: true });
       if (
         !stat.isFile() ||
-        (!allowLinks && stat.nlink !== 1) ||
-        stat.size > maxBytes
+        (!allowLinks && stat.nlink !== 1n) ||
+        stat.size > BigInt(maxBytes) ||
+        stat.dev !== before.dev ||
+        stat.ino !== before.ino
+      )
+        fail('SETTINGS_CORRUPT');
+      const openedPath = await lstat(path, { bigint: true });
+      if (
+        !openedPath.isFile() ||
+        openedPath.isSymbolicLink() ||
+        openedPath.dev !== stat.dev ||
+        openedPath.ino !== stat.ino
       )
         fail('SETTINGS_CORRUPT');
       const bytes = Buffer.alloc(maxBytes + 1);
@@ -87,12 +108,39 @@ export class SettingsStore {
         if (bytesRead === 0) break;
         size += bytesRead;
       }
-      if (size > maxBytes) fail('SETTINGS_CORRUPT');
+      const after = await lstat(path, { bigint: true });
+      if (
+        size > maxBytes ||
+        !after.isFile() ||
+        after.isSymbolicLink() ||
+        after.dev !== stat.dev ||
+        after.ino !== stat.ino
+      )
+        fail('SETTINGS_CORRUPT');
       return new TextDecoder('utf-8', { fatal: true }).decode(
         bytes.subarray(0, size),
       );
     } finally {
       await handle.close();
+    }
+  }
+  private async syncDirectory(path: string): Promise<void> {
+    // Windows can reject directory handles. File bytes were synced before rename;
+    // without directory fsync, power-loss durability of the rename is not promised.
+    try {
+      const directory = await open(path, 'r');
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    } catch (error) {
+      if (
+        process.platform === 'win32' &&
+        ['EISDIR', 'EPERM'].includes(code(error) ?? '')
+      )
+        return;
+      throw error;
     }
   }
   private async identity(
@@ -281,12 +329,7 @@ export class SettingsStore {
         await handle.close();
       }
       await rename(temporary, target);
-      const directory = await open(location.directory, 'r');
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
+      await this.syncDirectory(location.directory);
     } finally {
       await unlink(temporary).catch(() => {});
     }
@@ -433,12 +476,7 @@ export class SettingsStore {
       }
       await rename(temporary, join(location.directory, 'settings.json'));
       temporary = undefined;
-      const directory = await open(location.directory, 'r');
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
+      await this.syncDirectory(location.directory);
       return settings;
     } finally {
       if (temporary) await unlink(temporary).catch(() => {});

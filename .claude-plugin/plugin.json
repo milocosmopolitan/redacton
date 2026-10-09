@@ -1,6 +1,6 @@
 {
   "name": "redact",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local credential protection. Host failure qualifications and coverage limitations apply.",
   "author": {
     "name": "Redacton contributors"

@@ -1,4 +1,9 @@
 import { mkdir as ensureDirectory } from 'node:fs/promises';
+import {
+  claudeBinary,
+  hostVersion,
+  isolatedPlatformEnvironment,
+} from './host-runtime.mjs';
 
 await ensureDirectory('qualification/results', { recursive: true });
 
@@ -9,7 +14,7 @@ import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const root = resolve('.');
+const root = resolve(process.env.REDACTON_PLUGIN_ROOT ?? '.');
 const dir = await mkdtemp(join(tmpdir(), 'redacton-cancel-'));
 const plugin = join(dir, 'plugin');
 const sourceSha256 = {};
@@ -141,8 +146,9 @@ try {
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const env = {
+      ...isolatedPlatformEnvironment(dir),
       PATH: process.env.PATH,
-      HOME: process.env.HOME,
+      HOME: dir,
       CLAUDE_CONFIG_DIR: join(dir, `config-${mode}`),
       ANTHROPIC_API_KEY: 'synthetic-local-only',
       REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
@@ -150,7 +156,7 @@ try {
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     };
     const child = spawn(
-      'claude',
+      claudeBinary,
       [
         '-p',
         'Run the supplied synthetic tool once.',
@@ -262,8 +268,8 @@ try {
     }
   }
   await writeFile(
-    join(root, 'qualification/results/cancellation-host-report.json'),
-    `${JSON.stringify({ hostVersion: '2.1.294', node: process.version, platform: process.platform, arch: process.arch, sourceSha256, results }, null, 2)}\n`,
+    resolve('qualification/results/cancellation-host-report.json'),
+    `${JSON.stringify({ hostVersion, node: process.version, platform: process.platform, arch: process.arch, sourceSha256, results }, null, 2)}\n`,
   );
 } finally {
   await rm(dir, { recursive: true, force: true });

@@ -1,0 +1,127 @@
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { readTar } from './artifact-archive.mjs';
+import { requiredGates } from './qualification-evidence.mjs';
+
+const sha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+if (sha.status !== 0 || !/^[a-f0-9]{40}\s*$/.test(sha.stdout))
+  throw new Error('SOURCE_ID_UNAVAILABLE');
+const dirty = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
+if (dirty.status !== 0 || dirty.stdout.trim()) throw new Error('SOURCE_DIRTY');
+const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+const gates = Object.fromEntries(requiredGates.map((key) => [key, 'blocked']));
+const host = spawnSync(process.env.CLAUDE_BINARY ?? 'claude', ['--version'], {
+  encoding: 'utf8',
+  timeout: 10000,
+});
+if (host.status !== 0 || !host.stdout.startsWith('2.1.294 '))
+  throw new Error('PINNED_HOST_UNAVAILABLE');
+const archive = await readFile(`artifacts/redacton-${pkg.version}.tar.gz`);
+const temp = await mkdtemp(join(tmpdir(), 'redacton-ci-host-'));
+const pluginRoot = join(temp, `redacton-${pkg.version}`);
+function run(gate, script, ...args) {
+  // Harness stdout/stderr is discarded. Only a fixed gate and result leave this wrapper.
+  const result = spawnSync(process.execPath, [script, ...args], {
+    timeout: 240000,
+    maxBuffer: 1024 * 1024,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      REDACTON_PLUGIN_ROOT: pluginRoot,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    },
+  });
+  gates[gate] = result.status === 0 && !result.error ? 'passed' : 'failed';
+  console.log(JSON.stringify({ gate, status: gates[gate] }));
+}
+try {
+  for (const [path, bytes] of readTar(archive)) {
+    const destination = join(temp, path);
+    await mkdir(join(destination, '..'), { recursive: true });
+    await writeFile(destination, bytes);
+  }
+  const provenance = JSON.parse(
+    await readFile(join(pluginRoot, 'PROVENANCE.json'), 'utf8'),
+  );
+  const runtime = JSON.parse(
+    await readFile(join(pluginRoot, 'package.json'), 'utf8'),
+  );
+  const plugin = JSON.parse(
+    await readFile(join(pluginRoot, '.claude-plugin/plugin.json'), 'utf8'),
+  );
+  if (
+    provenance.source?.commit !== sha.stdout.trim() ||
+    provenance.source?.dirty !== false ||
+    provenance.engine !== '@redact-secret/core@0.1.0-beta.14' ||
+    provenance.sourceLockSha256 !==
+      createHash('sha256')
+        .update(await readFile('package-lock.json'))
+        .digest('hex') ||
+    runtime.dependencies?.['@redact-secret/core'] !==
+      pkg.dependencies['@redact-secret/core'] ||
+    runtime.version !== pkg.version ||
+    plugin.version !== pkg.version
+  )
+    throw new Error('ARTIFACT_SOURCE_IDENTITY_MISMATCH');
+  run('sdk', 'scripts/test-mod.mjs', '--validate');
+  if (gates.sdk === 'passed') run('sdk', 'scripts/test-mod.mjs');
+  run('package', 'scripts/verify-artifact.mjs', '--native');
+  if (gates.package === 'passed')
+    run('package', 'scripts/verify-installed-artifact.mjs');
+  for (const [gate, mode] of [
+    ['prompt', 'prompt'],
+    ['read', 'read'],
+    ['bash', 'bash'],
+    ['off', 'off'],
+    ['permission-denial', 'denied-bash'],
+  ])
+    run(gate, 'qualification/integration-host.mjs', mode);
+  run(
+    'guarded-errors',
+    'qualification/host-boundary-host.mjs',
+    'guarded-catch-failure',
+  );
+  if (gates['guarded-errors'] === 'passed')
+    run('guarded-errors', 'qualification/failure-host.mjs');
+  run('sessions', 'qualification/session-host.mjs');
+  // Cancellation uses Unix process groups. Windows remains blocked until an actual portable regression exists.
+  if (process.platform !== 'win32')
+    run('cancellation', 'qualification/cancellation-host.mjs');
+  const value = {
+    schemaVersion: 1,
+    sourceSha: sha.stdout.trim(),
+    artifactSha256: createHash('sha256').update(archive).digest('hex'),
+    version: pkg.version,
+    node: process.version,
+    claude: '2.1.294',
+    engine: pkg.dependencies['@redact-secret/core'],
+    platform: process.platform,
+    arch: process.arch,
+    emulated: false,
+    gates,
+  };
+  const destination = resolve(
+    process.argv[2] ?? 'qualification/results/ci-evidence',
+  );
+  await mkdir(destination, { recursive: true });
+  await writeFile(
+    join(
+      destination,
+      `${process.platform}-${process.arch}-${process.versions.node.split('.')[0]}.json`,
+    ),
+    `${JSON.stringify(value, null, 2)}\n`,
+  );
+  if (Object.values(gates).includes('failed')) process.exitCode = 1;
+  console.log(
+    JSON.stringify({
+      code: 'HOST_PROBES_COMPLETE',
+      qualification: 'blocked',
+      missing: requiredGates.filter((key) => gates[key] === 'blocked'),
+    }),
+  );
+} finally {
+  await rm(temp, { recursive: true, force: true });
+}

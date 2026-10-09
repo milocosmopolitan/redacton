@@ -7,9 +7,13 @@
 
 Keep recognized credentials out of supported Claude Code model inputs. Redacton scans prompt text/context, Read text, and Bash stdout/stderr, replacing detected credentials with placeholders. Recognized private keys block the entire event.
 
+Redacton targets **macOS, Linux and Windows CLI installations** with one shared Mod/helper implementation. The published verified release remains **macOS ARM64, Claude Code 2.1.294, Node 22.16.0**. Portable packages, Unix/PowerShell candidate installers and CI are development paths until each platform's actual host is qualified. See the [target and verified matrix](docs/PLATFORMS.md).
+
 Powered by **[Redact Secret](https://github.com/redact-secret/redact-secret)**, a deterministic Rust detection engine with native and WebAssembly runtimes. Scanning runs locally, without sending content to a detection service. Explore [Redact Secret](https://www.redactsecret.com) for local redaction in your own apps, and [star the project](https://github.com/redact-secret/redact-secret) to support it.
 
 ## Install in two minutes
+
+This command installs the existing verified **macOS Apple Silicon release**, not a universal cross-platform package.
 
 Have **Claude Code and Node.js 22** installed on **macOS Apple Silicon**. The verified combination is Claude Code **2.1.294** and Node **22.16.0**; other platforms, host versions and Desktop have not been qualified. Required follow-on support targets macOS x64, Linux x64/ARM64 and Windows x64/WSL; those targets are not supported by this installer.
 
@@ -21,6 +25,8 @@ claude --plugin-dir "$HOME/.local/share/redacton/current"
 The installer downloads the published package, verifies its pinned checksum, and installs it without npm or a build step. You can [inspect the installer](scripts/install.sh) or download packages from [Releases](https://github.com/milocosmopolitan/redacton/releases).
 
 The `--plugin-dir` option loads Redacton for that Claude Code launch. Use the same launch command for future sessions.
+
+Linux, Intel Mac, native Windows and WSL users should follow the [candidate installation and qualification guidance](docs/PLATFORMS.md). Native Windows and WSL are separate environments; Desktop is a separate host surface. A helper/installer success does not establish protection of model inputs.
 
 ## Use it
 
