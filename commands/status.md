@@ -2,4 +2,4 @@
 description: Open local Redacton status
 disable-model-invocation: true
 ---
-This command requires the local Redacton Mod. Never repeat or process command arguments. Configuration input belongs only in the local form.
+Redacton protection is INACTIVE when the local Mod is not loaded. This text fallback does not scan or protect any content. Do not consume, repeat, echo, or process command arguments. Do not call tools or send a model request to implement this command. Launch the qualified Claude Code CLI and confirm Protect ready before continuing. Cowork activation is unqualified; installation alone is not protection.

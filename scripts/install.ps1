@@ -151,7 +151,9 @@ try {
     }
     Move-Item -LiteralPath $root -Destination $current
     if ($previous) { Remove-Item -LiteralPath $previous -Recurse -Force; $previous = $null }
-    Write-Output 'Candidate installed. PowerShell tool output is outside Redacton Bash interception coverage.'
+    Write-Output 'Candidate files installed; helper self-check passed. Protection is INACTIVE until the Mod loads.'
+    Write-Output 'Start Claude Code CLI, run /redacton and confirm Protect ready. Cowork/Desktop activation is unqualified.'
+    Write-Output 'Installation does not establish host support. PowerShell tool output is outside Redacton Bash interception coverage.'
     Write-Output ("claude --plugin-dir '" + $current.Replace("'", "''") + "'")
 } catch {
     # Emit only a finite stage and fixed guidance, never exception text or paths.
