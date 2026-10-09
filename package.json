@@ -1,0 +1,19 @@
+{
+  "name": "redacton",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Experimental local Claude Code credential protection",
+  "scripts": {
+    "build": "node helper/build.mjs && node scripts/build-artifact.mjs",
+    "build:helper": "node helper/build.mjs",
+    "test": "node --test tests/*.test.js tests/*.test.mjs",
+    "test:helper": "node --test tests/helper*.test.mjs",
+    "test:mod": "node scripts/test-mod.mjs",
+    "validate": "node scripts/test-mod.mjs --validate",
+    "decisions:validate": "node scripts/validate-decisions.mjs"
+  },
+  "engines": { "node": "22.x || 24.x" },
+  "dependencies": { "@redact-secret/core": "0.1.0-beta.14" }
+}

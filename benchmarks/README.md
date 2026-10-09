@@ -1,0 +1,21 @@
+# Synthetic assessment corpus
+
+`alpha1-corpus.mjs` freezes 23 labeled assessment cases before execution: 14 positives and nine negatives. Values are newly authored synthetic strings, not live or real-derived credentials. No tuning split is used and no engine/policy change is made in response to scores. Run `node scripts/assess-quality.mjs` to regenerate safe evidence.
+
+Corpus revision note: the first authoring used a 21-character AWS identifier while the pinned schema requires 20 (prefix four plus 16 uppercase alphanumerics). The initial run consequently reported TP 11/FN 3/FP 0/TN 9. Revision 2 corrects only that invalid fixture's length and adds a length assertion; labels/policy/detector are unchanged. The initial corpus SHA-256 was `1694c063ac24a74b841cc2672aa12d10b1ef10f4445c9b2658227c7055054731`. This repair means the revised corpus is not an untouched holdout. The [pinned AWS detector contract](https://github.com/redact-secret/redact-secret/blob/0c62fd38bca75c5b28b042dc79789b708ebf1d17/crates/secret-scan-core/src/detectors/aws.rs) establishes the length independently of the observed score.
+
+Families include prefixed GitHub/AWS identifiers, bearer headers, connection passwords, contextual credentials, private-key blocks, benign references, Unicode and CRLF, plus deliberately difficult base64/zero-width cases. A recognized PEM fixture must block the whole helper event. Complete expected output strings are frozen for redaction cases; negatives must remain exactly unchanged. This small curated suite is not a representative market benchmark, independent holdout, or all-detector assessment.
+
+`heldout-corpus.mjs` adds six cases reserved from helper tests and initial assessment: escaped JSON, realistic command log/stdout/stderr and prompt context, benign request IDs, and environment references. Their labels/output expectations were committed to the source before executing them; no engine/policy tuning uses this split. They were authored after the first assessment was observed, so this is a public maintainer holdout, not independent or permanently blind evidence. Subsequent executions are regression runs. Reports keep the split and its source hash visible.
+
+## External provenance and bias
+
+Three source groups inform protocol shapes; all text/value combinations were rewritten, not imported verbatim:
+
+- `rfc6750-shape`: [RFC 6750 section 2.1](https://www.rfc-editor.org/rfc/rfc6750#section-2.1), M. Jones and D. Hardt, IETF Trust Legal Provisions; code components use BSD-3-Clause. Newly composed GET/header structures and synthetic token values differ from RFC example credentials.
+- `rfc3986-shape`: [RFC 3986 section 3.2.1](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1), T. Berners-Lee, R. Fielding, L. Masinter, IETF Trust Legal Provisions; code components use BSD-3-Clause. Newly authored localhost PostgreSQL URI shapes use synthetic user/password/database values.
+- `aws-cli-shape`: [AWS CLI create-access-key example](https://github.com/aws/aws-cli/blob/4a54791df2da35778bca1325f71b1cb0b4ba770a/awscli/examples/iam/create-access-key.rst), Amazon.com, Inc. or affiliates, Apache-2.0. Only the published `AccessKeyId` field concept is used; JSON text and values are newly composed, no excerpt is copied.
+
+These references and license classifications are also recorded in the pinned [upstream provenance manifest](https://github.com/redact-secret/redact-secret-benchmarks/blob/573e128863e0543133e5ccbd513216d19513b7da/adversarial/packs/beta9-external-inputs/sources.json). This is attribution of protocol-shape inspiration, not a claim that upstream fixtures are independently relabeled or licensed by Redacton. No third-party fixture text is redistributed. Copying actual upstream fixtures in future requires their complete individual notices and license terms.
+
+Authors selected families with knowledge of the pinned engine and labels are maintainer authored. That selection creates bias even though these fixtures were not used to alter the detector. External-source structure is distinct from external authorship or independent performance evidence. Real-repository corpora and gated benchmarks are excluded. The source file's SHA-256 identifies the frozen corpus; this is an artifact hash, never a secret hash.

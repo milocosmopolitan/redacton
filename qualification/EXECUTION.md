@@ -2,6 +2,8 @@
 
 This plan follows epic #1. A phase is complete only when its acceptance evidence exists, not when its implementation compiles.
 
+The original single-layer NO-GO was followed by a tested independent outer guard. [Decision 0002](../docs/decisions/0002-layered-trusted-results.md) supersedes the blanket implementation stop; experimental integration proceeds with explicit host/runtime exclusions. The [current evidence](INTEGRATION_REPORT.md) is the authority for remaining release gates.
+
 ## Dependency order and PR budget
 
 1. **Host gate, #2:** inspect the installed SDK and test synthetic payloads, aliases, failure paths, command/UI surfaces, and operation association. Merge the evidence and go/no-go decision first. A no-go stops dependent implementation.

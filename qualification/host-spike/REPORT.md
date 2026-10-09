@@ -18,7 +18,7 @@ Run from the repository root. These commands use only synthetic text. The mock e
 
 ```sh
 rtk proxy claude plugin validate --strict qualification/host-spike
-rtk proxy claude plugin test qualification/host-spike
+rtk proxy node qualification/host-spike/run-tests.mjs
 rtk proxy node qualification/host-spike/mock-host.mjs
 rtk proxy node qualification/host-spike/mock-host.mjs 'printf SPIKE_RAW # spike-throw'
 rtk proxy node qualification/host-spike/mock-host.mjs 'printf SPIKE_RAW # spike-catch-throw'

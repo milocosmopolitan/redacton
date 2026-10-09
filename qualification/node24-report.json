@@ -1,0 +1,26 @@
+{
+  "node": "v24.21.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "distribution": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
+  "distributionSha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+  "officialChecksumVerified": true,
+  "suite": "Node helper, protocol, state and adapters",
+  "tests": 25,
+  "status": "passed",
+  "sourceSha256": {
+    "tests/adapters.test.js": "986185baff0f96627b7b7d89764a90f58eff0b9c485050cc3ca2f2b5e80cfe93",
+    "tests/helper-engine.test.mjs": "366a388a2bfbe6ce7f557b7cca958f00709bbbdb70a13f7ad7edeaaa7f57cbf6",
+    "tests/helper.test.mjs": "5f360f45e1dd08b0cef79ae526467695ccd06bf0e10a6a09989c1a44ce6ec632",
+    "tests/protocol.test.mjs": "a0d4e554df739e3a7504be3001991b709f6e245007ab31bab9d71825f1b15fa5",
+    "tests/state.test.js": "903cb71eba83f4691863ccf95ffb65400e65d3bd828b19ae156f847c3a54a2ee",
+    "helper/src/core.mjs": "19a9c12e91c014a4f6119c0a62ea0a177b74f6f164022e1c77af559702ef84ca",
+    "helper/src/index.mjs": "2eec5aa57c6031c05bb2ef56f34b4f2b0de48387c60e200950bc2c2f7ef38f77",
+    "helper/src/canonical-types.json": "07d4ae558c61433bbacadb12aaf2eed1cb523349a899c4787922ab5e31111f49",
+    "mod/protocol.js": "ed45f3008cd39fdf325f927b7b264481236e5bd8a5863cdbd4b5b7b9c1345d3e",
+    "mod/state.js": "d5f5a25fab47b80c263f5b3040a7e17880c049c4b6c34788ba70c08ec093219f",
+    "mod/adapters/text.js": "c4ddff317cd47121c44cadfcd134e4b0f1b544dbb9c748ad81f883b07ab57bf9",
+    "package-lock.json": "07ba19be0deab2cd4939a31a61dc8b54ac3ba7040610492d0e61d22f36b5fb53"
+  },
+  "hostQualification": "Claude host matrix not inferred from helper tests"
+}
