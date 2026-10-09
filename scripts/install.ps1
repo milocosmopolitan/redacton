@@ -15,6 +15,18 @@ $exitCode = 0
 $safeNodePlatform = 'unknown'
 $safeNodeArchitecture = 'unknown'
 $safeNodeVersion = 'unknown'
+function Get-RedactonFileDigest([string]$FilePath) {
+    # Stream through Framework cryptography, without optional module autoloading.
+    $stream = [IO.File]::OpenRead($FilePath)
+    $algorithm = $null
+    try {
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        if ($algorithm) { $algorithm.Dispose() }
+    }
+}
 try {
     # Windows PowerShell 5.1 may not load the RuntimeInformation facade. Native OS
     # architecture remains visible even when PowerShell runs under WOW64.
@@ -60,8 +72,10 @@ try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri "https://github.com/milocosmopolitan/redacton/releases/download/v$ReleaseVersion/redacton-$ReleaseVersion.zip" -OutFile $archive -UseBasicParsing -TimeoutSec 90
     }
-    $stage = 'ARCHIVE_CHECKSUM'
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ArchiveSha256) { throw 'Archive checksum mismatch.' }
+    $stage = 'ARCHIVE_CHECKSUM_READ'
+    $archiveDigest = Get-RedactonFileDigest $archive
+    $stage = 'ARCHIVE_CHECKSUM_MATCH'
+    if ($archiveDigest -ne $ArchiveSha256) { throw 'Archive checksum mismatch.' }
     $stage = 'ARCHIVE_INSPECTION'
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($archive)
@@ -87,19 +101,27 @@ try {
             }
         }
     } finally { $zip.Dispose() }
-    $stage = 'INTERNAL_CHECKSUMS'
+    $stage = 'INTERNAL_MANIFEST_READ'
     $root = Join-Path $staging "redacton-$ReleaseVersion"
+    $manifestPath = Join-Path $root 'SHA256SUMS'
+    $manifestLines = [IO.File]::ReadAllLines($manifestPath, [Text.Encoding]::UTF8)
     $listed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($line in Get-Content -LiteralPath (Join-Path $root 'SHA256SUMS') -Encoding UTF8) {
+    foreach ($line in $manifestLines) {
+        $stage = 'INTERNAL_MANIFEST_VALIDATE'
         if ($line -notmatch '^([a-f0-9]{64})  (.+)$') { throw 'Invalid internal checksums.' }
         $hash = $Matches[1]; $name = $Matches[2]
         if ($name.Contains('\') -or $name.Contains(':') -or $name.StartsWith('/') -or $name.Split('/') -contains '..' -or $name.Split('/') -contains '.' -or $name.Split('/') -contains '' -or !$listed.Add($name)) { throw 'Unsafe checksum path.' }
-        if ((Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash) { throw 'File checksum mismatch.' }
+        $stage = 'INTERNAL_CHECKSUM_READ'
+        $fileDigest = Get-RedactonFileDigest (Join-Path $root $name)
+        $stage = 'INTERNAL_CHECKSUM_MATCH'
+        if ($fileDigest -ne $hash) { throw 'File checksum mismatch.' }
     }
-    $files = @(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.FullName -ne (Join-Path $root 'SHA256SUMS') })
-    if ($files.Count -ne $listed.Count) { throw 'Unlisted files.' }
+    $stage = 'INTERNAL_FILE_SET'
+    $files = [IO.Directory]::GetFiles($root, '*', [IO.SearchOption]::AllDirectories)
+    if (($files.Length - 1) -ne $listed.Count) { throw 'Unlisted files.' }
     foreach ($file in $files) {
-        $relative = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
+        if ($file -eq $manifestPath) { continue }
+        $relative = $file.Substring($root.Length + 1).Replace('\', '/')
         if (!$listed.Contains($relative)) { throw 'Unlisted file.' }
     }
     # Node constructs argv and enforces timeout without invoking a shell or model task.
@@ -128,7 +150,15 @@ try {
     Write-Output ("claude --plugin-dir '" + $current.Replace("'", "''") + "'")
 } catch {
     # Emit only a finite stage and fixed guidance, never exception text or paths.
-    [Console]::Error.WriteLine("Redacton: INSTALL_$stage failed. Node platform=$safeNodePlatform arch=$safeNodeArchitecture version=$safeNodeVersion. Check Node/Claude prerequisites, reviewed archive digest and a writable short path. Existing installation preserved.")
+    $category = switch ($_.Exception.GetType().Name) {
+        'CommandNotFoundException' { 'COMMAND_NOT_FOUND' }
+        'ParameterBindingException' { 'PARAMETER_BINDING' }
+        'ParameterBindingValidationException' { 'PARAMETER_BINDING' }
+        'MethodInvocationException' { 'METHOD_INVOCATION' }
+        'RuntimeException' { 'REJECTED' }
+        default { 'OTHER' }
+    }
+    [Console]::Error.WriteLine("Redacton: INSTALL_$stage failed category=$category. Node platform=$safeNodePlatform arch=$safeNodeArchitecture version=$safeNodeVersion. Check Node/Claude prerequisites, reviewed archive digest and a writable short path. Existing installation preserved.")
     $exitCode = 1
 } finally {
     try {
