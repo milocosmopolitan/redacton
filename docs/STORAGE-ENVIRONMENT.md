@@ -98,3 +98,14 @@ The 10-run local macOS Node 22.16.0 timing sample measured settings load at
 probe at 17.40 ms median / 20.49 ms maximum. Each sample used a fresh Node process;
 these timings exclude Node/engine startup and are observations, not guarantees.
 The installer suite passed 13 tests with the native Windows test skipped locally.
+
+The actual `qualification/environment-host.mjs` synthetic probe passed on Claude
+Code 2.1.295 / macOS ARM64 / Node 22.16.0. A separate harmless inherited marker
+remained visible through a process `env` overlay, confirming replacement is not
+provided. A synthetic `NODE_OPTIONS` preload designed to refuse Node startup was
+neutralized; real personal settings loading and self-check reached Protect ready.
+No environment values or exception paths were dumped. The isolated CLI uses only
+a synthetic API key and an unavailable loopback model endpoint. This does not
+establish that every inherited credential is removed or that OS-loader/PATH
+injection is prevented. The three production launch sites separately have SDK
+regression assertions for both cleared Node variables.
