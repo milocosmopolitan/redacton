@@ -1,4 +1,9 @@
 import { mkdir as ensureDirectory } from 'node:fs/promises';
+import {
+  claudeBinary,
+  hostVersion,
+  isolatedPlatformEnvironment,
+} from './host-runtime.mjs';
 
 await ensureDirectory('qualification/results', { recursive: true });
 
@@ -9,7 +14,7 @@ import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const root = resolve('.');
+const root = resolve(process.env.REDACTON_PLUGIN_ROOT ?? '.');
 const dir = await mkdtemp(join(tmpdir(), 'redacton-session-'));
 const synthetic = 'ghp_SYNTHETICREVOKED00000000000000000000';
 const sourceSha256 = {};
@@ -71,8 +76,9 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const env = {
+  ...isolatedPlatformEnvironment(dir),
   PATH: process.env.PATH,
-  HOME: process.env.HOME,
+  HOME: dir,
   CLAUDE_CONFIG_DIR: join(dir, 'config'),
   ANTHROPIC_API_KEY: 'synthetic-local-only',
   REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
@@ -80,9 +86,9 @@ const env = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 };
 try {
-  // Direct argv child preserves interactive streaming; rtk's proxy buffers stdout.
+  // Direct argv preserves streaming and the selected pinned host.
   const child = spawn(
-    'claude',
+    claudeBinary,
     [
       '-p',
       '--plugin-dir',
@@ -180,8 +186,8 @@ try {
     process.exitCode = 1;
   else
     await writeFile(
-      join(root, 'qualification/results/stream-session-host-report.json'),
-      `${JSON.stringify({ hostVersion: '2.1.294', node: process.version, platform: process.platform, arch: process.arch, sourceSha256, result: report }, null, 2)}\n`,
+      resolve('qualification/results/stream-session-host-report.json'),
+      `${JSON.stringify({ hostVersion, node: process.version, platform: process.platform, arch: process.arch, sourceSha256, result: report }, null, 2)}\n`,
     );
 } finally {
   server.close();

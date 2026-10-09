@@ -66,13 +66,34 @@ export class SettingsStore {
     maxBytes = MAX_BYTES,
     allowLinks = false,
   ): Promise<string> {
-    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = await lstat(path, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      (!allowLinks && before.nlink !== 1n) ||
+      before.size > BigInt(maxBytes)
+    )
+      fail('SETTINGS_CORRUPT');
+    const handle = await open(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    );
     try {
-      const stat = await handle.stat();
+      const stat = await handle.stat({ bigint: true });
       if (
         !stat.isFile() ||
-        (!allowLinks && stat.nlink !== 1) ||
-        stat.size > maxBytes
+        (!allowLinks && stat.nlink !== 1n) ||
+        stat.size > BigInt(maxBytes) ||
+        stat.dev !== before.dev ||
+        stat.ino !== before.ino
+      )
+        fail('SETTINGS_CORRUPT');
+      const openedPath = await lstat(path, { bigint: true });
+      if (
+        !openedPath.isFile() ||
+        openedPath.isSymbolicLink() ||
+        openedPath.dev !== stat.dev ||
+        openedPath.ino !== stat.ino
       )
         fail('SETTINGS_CORRUPT');
       const bytes = Buffer.alloc(maxBytes + 1);
@@ -87,12 +108,39 @@ export class SettingsStore {
         if (bytesRead === 0) break;
         size += bytesRead;
       }
-      if (size > maxBytes) fail('SETTINGS_CORRUPT');
+      const after = await lstat(path, { bigint: true });
+      if (
+        size > maxBytes ||
+        !after.isFile() ||
+        after.isSymbolicLink() ||
+        after.dev !== stat.dev ||
+        after.ino !== stat.ino
+      )
+        fail('SETTINGS_CORRUPT');
       return new TextDecoder('utf-8', { fatal: true }).decode(
         bytes.subarray(0, size),
       );
     } finally {
       await handle.close();
+    }
+  }
+  private async syncDirectory(path: string): Promise<void> {
+    // Windows can reject directory handles. File bytes were synced before rename;
+    // without directory fsync, power-loss durability of the rename is not promised.
+    try {
+      const directory = await open(path, 'r');
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    } catch (error) {
+      if (
+        process.platform === 'win32' &&
+        ['EISDIR', 'EPERM'].includes(code(error) ?? '')
+      )
+        return;
+      throw error;
     }
   }
   private async identity(
@@ -281,12 +329,7 @@ export class SettingsStore {
         await handle.close();
       }
       await rename(temporary, target);
-      const directory = await open(location.directory, 'r');
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
+      await this.syncDirectory(location.directory);
     } finally {
       await unlink(temporary).catch(() => {});
     }
@@ -308,6 +351,17 @@ export class SettingsStore {
     )
       fail('SETTINGS_BUSY');
     return { pid: value.pid, nonce: value.nonce };
+  }
+  private async leaseOwner(
+    path: string,
+  ): Promise<{ pid: number; nonce: string }> {
+    try {
+      return this.owner(JSON.parse(await this.readBounded(path, 256, true)));
+    } catch {
+      // A lease can turn over during inspection. Unknown ownership stays busy;
+      // never unlink it or confuse lock contention with corrupt settings content.
+      fail('SETTINGS_BUSY');
+    }
   }
   private dead(pid: number): boolean {
     try {
@@ -337,9 +391,7 @@ export class SettingsStore {
         } catch (error) {
           if (code(error) !== 'EEXIST') throw error;
         }
-        const old = this.owner(
-          JSON.parse(await this.readBounded(lock, 256, true)),
-        );
+        const old = await this.leaseOwner(lock);
         if (!this.dead(old.pid)) fail('SETTINGS_BUSY');
         const recovery = join(directory, `.recover-${old.nonce}`);
         let claimed = false;
@@ -352,9 +404,7 @@ export class SettingsStore {
             if (code(error) === 'EEXIST') fail('SETTINGS_BUSY');
             throw error;
           }
-          const current = this.owner(
-            JSON.parse(await this.readBounded(lock, 256, true)),
-          );
+          const current = await this.leaseOwner(lock);
           if (
             current.nonce !== old.nonce ||
             current.pid !== old.pid ||
@@ -374,9 +424,7 @@ export class SettingsStore {
   private async release(directory: string, nonce: string): Promise<void> {
     const lock = join(directory, '.settings.lock');
     try {
-      const owner = this.owner(
-        JSON.parse(await this.readBounded(lock, 256, true)),
-      );
+      const owner = await this.leaseOwner(lock);
       if (owner.nonce === nonce && owner.pid === process.pid)
         await unlink(lock);
     } catch {
@@ -433,12 +481,7 @@ export class SettingsStore {
       }
       await rename(temporary, join(location.directory, 'settings.json'));
       temporary = undefined;
-      const directory = await open(location.directory, 'r');
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
+      await this.syncDirectory(location.directory);
       return settings;
     } finally {
       if (temporary) await unlink(temporary).catch(() => {});

@@ -1,0 +1,134 @@
+name: Qualification
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Native row to rerun, or all
+        type: choice
+        options: [all, linux-x64, linux-arm64, darwin-arm64, darwin-x64, win32-x64]
+        default: linux-x64
+      node:
+        description: Exact Node compatibility row
+        type: choice
+        options: ['22.16.0', '24.21.0']
+        default: '22.16.0'
+      scope:
+        description: Package matrix only or package plus actual-host probes
+        type: choice
+        options: [package, host]
+        default: host
+permissions:
+  contents: read
+concurrency:
+  group: qualification-${{ github.ref }}-${{ inputs.target }}-${{ inputs.node }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          node <<'JS'
+          const fs = require('fs');
+          const rows = [
+            { target: 'linux-x64', os: 'ubuntu-24.04', arch: 'x64' },
+            { target: 'linux-arm64', os: 'ubuntu-24.04-arm', arch: 'arm64' },
+            { target: 'darwin-arm64', os: 'macos-15', arch: 'arm64' },
+            { target: 'darwin-x64', os: 'macos-15-intel', arch: 'x64' },
+            { target: 'win32-x64', os: 'windows-2025', arch: 'x64' },
+          ].filter(row => process.env.TARGET === 'all' || row.target === process.env.TARGET);
+          if (!rows.length) throw new Error('TARGET_UNAVAILABLE');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include: rows })}\n`);
+          JS
+  build:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-22.16.0-${{ hashFiles('package-lock.json') }}
+      - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
+      - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build && node scripts/verify-artifact.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canonical-package
+          path: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/SHA256SUMS
+          retention-days: 14
+  native:
+    needs: [plan, build]
+    if: github.repository == 'milocosmopolitan/redacton'
+    strategy:
+      max-parallel: 2
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+      DISABLE_AUTOUPDATER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        if: inputs.target == 'all' || inputs.target == matrix.target
+      - uses: actions/setup-node@v4
+        if: inputs.target == 'all' || inputs.target == matrix.target
+        with:
+          node-version: ${{ inputs.node }}
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-${{ inputs.node }}-${{ hashFiles('package-lock.json') }}
+      - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
+      - if: inputs.target == 'all' || inputs.target == matrix.target
+        env:
+          EXPECTED: ${{ matrix.arch }}
+        run: node -e 'if(process.arch!==process.env.EXPECTED) throw new Error("NATIVE_RUNNER_REQUIRED")'
+      - if: inputs.target == 'all' || inputs.target == matrix.target
+        run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
+      - if: inputs.target == 'all' || inputs.target == matrix.target
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - if: inputs.target == 'all' || inputs.target == matrix.target
+        run: npm run check:pure
+      - run: npm run ci:identity
+      - uses: actions/download-artifact@v4
+        with:
+          name: canonical-package
+          path: artifacts
+      - id: artifact
+        run: node scripts/verify-artifact.mjs --native
+      - id: fixtures
+        run: npm run test:installer
+      - id: host
+        if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'host' }}
+        shell: bash
+        run: |
+          node scripts/install-ci-host.mjs "$RUNNER_TEMP/redacton-host"
+          echo "$RUNNER_TEMP/redacton-host" >> "$GITHUB_PATH"
+          echo "CLAUDE_CONFIG_DIR=$RUNNER_TEMP/redacton-host-config" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = Windows ]; then echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude.exe" >> "$GITHUB_ENV"; else echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude" >> "$GITHUB_ENV"; fi
+      - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && steps.host.outcome == 'success' && inputs.scope == 'host' }}
+        run: npm run ci:host
+      - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'package' }}
+        run: npm run ci:host -- --package-only
+      - uses: actions/upload-artifact@v4
+        if: always() && (inputs.target == 'all' || inputs.target == matrix.target)
+        with:
+          name: bounded-host-evidence-${{ matrix.target }}-${{ inputs.node }}
+          path: qualification/results/ci-evidence/*.json
+          if-no-files-found: error
+          retention-days: 14

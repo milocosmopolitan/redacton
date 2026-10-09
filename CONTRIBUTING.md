@@ -17,6 +17,8 @@ node scripts/verify-artifact.mjs
 
 `check` runs the current type/lint and unit checks; `typecheck`, `lint`, and `format` are also available individually. Use the installed Claude Code-generated declarations, not an assumed public SDK snapshot. Generated helper output and qualification results are build products, not a second editable source tree.
 
+Without Claude, `npm run check:pure` checks helper/controllers and deterministic regressions; it does not replace full SDK validation. To select the exact qualification host without changing your installed launcher, set `CLAUDE_BINARY` to its absolute executable path. After building, run `node scripts/verify-installed-artifact.mjs` for a clean/repeat candidate install with the real helper. See [platform targets](docs/PLATFORMS.md) and [CI policy](docs/CI.md) before interpreting platform results.
+
 TypeScript belongs in `mod/` and `helper/src/`. SDK calls stay in Mod registration; imported adapters receive data only. Scanning stays in the separate pinned-engine helper. Do not add a Rust detector/helper merely to duplicate the engine's existing native/WASM implementation.
 
 ## Configuration changes

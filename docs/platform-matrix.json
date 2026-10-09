@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "reviewedDate": "2026-10-09",
+  "engineVersion": "0.1.0-beta.14",
+  "claudeQualificationVersion": "2.1.294",
+  "claudeSupportedRange": null,
+  "nodeFloors": {
+    "22": "22.16.0",
+    "24": "24.21.0"
+  },
+  "linuxGlibcFloor": "2.31",
+  "surface": "cli",
+  "candidateArtifact": "portable-wasm",
+  "environments": [
+    {
+      "id": "macos-arm64",
+      "platform": "darwin",
+      "arch": "arm64",
+      "libc": null,
+      "addon": "node-darwin-arm64",
+      "scope": "target",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "macos-x64",
+      "platform": "darwin",
+      "arch": "x64",
+      "libc": null,
+      "addon": "node-darwin-x64",
+      "scope": "target",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "linux-glibc-x64",
+      "platform": "linux",
+      "arch": "x64",
+      "libc": "gnu",
+      "addon": "node-linux-x64-gnu",
+      "scope": "target",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "linux-glibc-arm64",
+      "platform": "linux",
+      "arch": "arm64",
+      "libc": "gnu",
+      "addon": "node-linux-arm64-gnu",
+      "scope": "target",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "windows-x64",
+      "platform": "win32",
+      "arch": "x64",
+      "libc": null,
+      "addon": "node-win32-x64-msvc",
+      "scope": "target",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "wsl2-x64",
+      "platform": "linux",
+      "arch": "x64",
+      "libc": "gnu",
+      "addon": "node-linux-x64-gnu",
+      "scope": "target",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "wsl2-arm64",
+      "platform": "linux",
+      "arch": "arm64",
+      "libc": "gnu",
+      "addon": "node-linux-arm64-gnu",
+      "scope": "target",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "linux-musl-x64",
+      "platform": "linux",
+      "arch": "x64",
+      "libc": "musl",
+      "addon": "node-linux-x64-musl",
+      "scope": "follow-up",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "linux-musl-arm64",
+      "platform": "linux",
+      "arch": "arm64",
+      "libc": "musl",
+      "addon": "node-linux-arm64-musl",
+      "scope": "follow-up",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    },
+    {
+      "id": "windows-arm64",
+      "platform": "win32",
+      "arch": "arm64",
+      "libc": null,
+      "addon": "node-win32-arm64-msvc",
+      "scope": "follow-up",
+      "nodeMajors": [
+        22,
+        24
+      ],
+      "qualification": "unqualified",
+      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+    }
+  ],
+  "historicalVerified": {
+    "tag": "v0.1.0",
+    "environment": "macos-arm64",
+    "node": "22.16.0",
+    "claude": "2.1.294",
+    "evidence": "https://github.com/milocosmopolitan/redacton/releases/download/v0.1.0/QUALIFICATION.json"
+  },
+  "desktop": {
+    "scope": "separate-surface",
+    "qualification": "unqualified",
+    "issue": 27
+  }
+}

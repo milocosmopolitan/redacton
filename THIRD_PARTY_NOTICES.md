@@ -1,6 +1,6 @@
 # Third-party notices
 
-The dependency lockfile pins the following Redact Secret packages at 0.1.0-beta.14. The evaluation artifact includes the core, WASM, and the locally installed native platform package; other platforms are optional lockfile entries, not qualified support. Integrity values identify npm tarballs, not local build output.
+The dependency lockfile pins the following Redact Secret packages at 0.1.0-beta.14. Current portable candidate artifacts include core and WASM only; optional native packages remain declared in the lockfile for development and separate native checks. Historical release artifacts included the build host's native package and retain their original scope. Package declarations do not establish platform qualification. Integrity values identify npm tarballs, not local build output.
 
 - `@redact-secret/core@0.1.0-beta.14`, MIT, `sha512-1h5NxUto2ZEqQD5hfIgbzwDZkmu6WXdlmtF0waG3FcKDhpCEoUphgj4B4VGRyhVhjJOFT58/TrER+3EL1bCnag==`.
 - `@redact-secret/node-darwin-arm64@0.1.0-beta.14`, MIT, `sha512-ARFG6EaEZwHGOCnaPqqtlF5BljxQ6sNAA74N7QU159EvVYCEZvg8gzSeDgt0kjJdJL+vlEjT1zWov+MoZV8KMA==`.

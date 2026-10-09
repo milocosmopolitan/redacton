@@ -10,8 +10,22 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { archiveTar, archiveZip } from './artifact-archive.mjs';
 
-const root = resolve('artifacts/redacton-0.1.0');
+const packageMetadata = JSON.parse(
+  await readFile(resolve('package.json'), 'utf8'),
+);
+const pluginMetadata = JSON.parse(
+  await readFile(resolve('.claude-plugin/plugin.json'), 'utf8'),
+);
+const version = packageMetadata.version;
+if (
+  !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(version) ||
+  pluginMetadata.version !== version
+)
+  throw new Error('ARTIFACT_VERSION_MISMATCH');
+const artifactName = `redacton-${version}`;
+const root = resolve('artifacts', artifactName);
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function files(dir, prefix = '') {
   const result = [];
@@ -72,7 +86,7 @@ await writeFile(
   `${JSON.stringify(runtimeLock, null, 2)}\n`,
 );
 runtimePackage.redactonArtifact = {
-  classification: 'qualified-terminal',
+  classification: 'unqualified-portable-wasm',
   prebuilt: true,
   development: 'Use the source repository for build and test commands.',
 };
@@ -81,15 +95,66 @@ await writeFile(
   `${JSON.stringify(runtimePackage, null, 2)}\n`,
 );
 await mkdir(join(root, 'node_modules/@redact-secret'), { recursive: true });
-for (const name of (
-  await readdir(resolve('node_modules/@redact-secret'))
-).sort()) {
-  await cp(
-    resolve('node_modules/@redact-secret', name),
-    join(root, 'node_modules/@redact-secret', name),
-    { recursive: true, dereference: false },
+const dependencies = [];
+for (const name of ['core', 'wasm']) {
+  const packagePath = resolve('node_modules/@redact-secret', name);
+  const metadata = JSON.parse(
+    await readFile(join(packagePath, 'package.json'), 'utf8'),
   );
+  const locked = runtimeLock.packages[`node_modules/@redact-secret/${name}`];
+  if (
+    metadata.version !== '0.1.0-beta.14' ||
+    locked?.version !== metadata.version ||
+    typeof locked.integrity !== 'string' ||
+    typeof locked.resolved !== 'string'
+  )
+    throw new Error('ENGINE_PIN_MISMATCH');
+  dependencies.push({
+    name: metadata.name,
+    version: metadata.version,
+    resolved: locked.resolved,
+    integrity: locked.integrity,
+  });
+  await cp(packagePath, join(root, 'node_modules/@redact-secret', name), {
+    recursive: true,
+    dereference: false,
+  });
 }
+const commit = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+const dirty = spawnSync(
+  'git',
+  ['status', '--porcelain', '--untracked-files=normal'],
+  { encoding: 'utf8' },
+);
+await writeFile(
+  join(root, 'PROVENANCE.json'),
+  `${JSON.stringify(
+    {
+      schemaVersion: 1,
+      artifact: 'portable-wasm',
+      engine: '@redact-secret/core@0.1.0-beta.14',
+      dependencies,
+      source: {
+        commit: commit.status === 0 ? commit.stdout.trim() : 'unavailable',
+        dirty: dirty.status === 0 ? dirty.stdout.trim() !== '' : 'unavailable',
+      },
+      dependencyTrust:
+        'Installed bytes require clean npm ci --ignore-scripts from the pinned source lock; archive build records npm tarball identities but does not reauthenticate installed package bytes.',
+      runtime:
+        'public automatic WASM fallback; native optional packages omitted',
+      sourceLockSha256: digest(await readFile(resolve('package-lock.json'))),
+      builder: {
+        node: process.version,
+        platform: process.platform,
+        arch: process.arch,
+      },
+      qualification:
+        'Build identity only; actual host/platform qualification is separate.',
+    },
+    null,
+    2,
+  )}\n`,
+);
 const list = await files(root);
 await writeFile(
   join(root, 'SHA256SUMS'),
@@ -101,25 +166,26 @@ await writeFile(
     )
   ).join('\n')}\n`,
 );
-const archive = resolve('artifacts/redacton-0.1.0.tar.gz');
-// Normalize archive metadata so identical file bytes produce identical archives.
-const python = `import gzip,tarfile,pathlib,sys\nroot=pathlib.Path(sys.argv[1]); target=sys.argv[2]\nwith open(target,'wb') as raw:\n with gzip.GzipFile(filename='',mode='wb',fileobj=raw,mtime=0) as gz:\n  with tarfile.open(fileobj=gz,mode='w',format=tarfile.PAX_FORMAT) as tar:\n   for path in sorted(root.rglob('*')):\n    if not path.is_file(): continue\n    info=tar.gettarinfo(str(path),arcname='redacton-0.1.0/'+path.relative_to(root).as_posix()); info.uid=info.gid=0; info.uname=info.gname=''; info.mtime=0; info.mode=0o644; info.pax_headers={}\n    with path.open('rb') as data: tar.addfile(info,data)\n`;
-const result = spawnSync(
-  'rtk',
-  ['proxy', 'python3', '-c', python, root, archive],
-  { encoding: 'utf8' },
+const entries = await Promise.all(
+  [...list, 'SHA256SUMS'].sort().map(async (path) => ({
+    name: `${artifactName}/${path}`,
+    data: await readFile(join(root, path)),
+  })),
 );
-if (result.status !== 0) throw new Error('ARCHIVE_BUILD_FAILED');
-const hash = digest(await readFile(archive));
-await writeFile(
-  resolve('artifacts/SHA256SUMS'),
-  `${hash}  redacton-0.1.0.tar.gz\n`,
-);
+const archives = {
+  [`${artifactName}.tar.gz`]: archiveTar(entries),
+  [`${artifactName}.zip`]: archiveZip(entries),
+};
+const sums = [];
+for (const [name, bytes] of Object.entries(archives)) {
+  await writeFile(resolve('artifacts', name), bytes);
+  sums.push(`${digest(bytes)}  ${name}`);
+}
+await writeFile(resolve('artifacts/SHA256SUMS'), `${sums.join('\n')}\n`);
 console.log(
   JSON.stringify({
-    artifact: 'redacton-0.1.0.tar.gz',
-    sha256: hash,
+    artifacts: Object.keys(archives),
     files: list.length,
-    classification: 'qualified-terminal',
+    classification: 'unqualified-portable-wasm',
   }),
 );

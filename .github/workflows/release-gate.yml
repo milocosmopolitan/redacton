@@ -1,0 +1,86 @@
+name: Release qualification gate
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      node22_run:
+        description: Reviewed Qualification run ID for all Node 22 rows
+        required: true
+        type: string
+      node24_run:
+        description: Reviewed Qualification run ID for all Node 24 rows
+        required: true
+        type: string
+      manual_run:
+        description: Optional successful exact-commit Reviewed manual qualification evidence run
+        required: false
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - if: github.event_name == 'workflow_dispatch'
+        env:
+          NODE22_RUN: ${{ inputs.node22_run }}
+          NODE24_RUN: ${{ inputs.node24_run }}
+          MANUAL_RUN: ${{ inputs.manual_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-qualification-runs.mjs
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node22_run }}
+          pattern: bounded-host-evidence-*
+          merge-multiple: true
+          path: qualification/evidence
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node22_run }}
+          name: canonical-package
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node24_run }}
+          pattern: bounded-host-evidence-*
+          merge-multiple: true
+          path: qualification/evidence
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.manual_run != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.manual_run }}
+          name: reviewed-manual-provenance
+          path: qualification/manual-review
+      - if: github.event_name == 'workflow_dispatch' && inputs.manual_run != ''
+        env:
+          NODE22_RUN: ${{ inputs.node22_run }}
+          NODE24_RUN: ${{ inputs.node24_run }}
+          MANUAL_RUN: ${{ inputs.manual_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-qualification-runs.mjs --manifest
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.manual_run != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.manual_run }}
+          name: reviewed-manual-evidence
+          path: qualification/evidence
+      - run: npm run release:gate
+      - run: node scripts/ci-identity.mjs

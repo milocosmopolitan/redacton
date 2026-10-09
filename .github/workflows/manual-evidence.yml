@@ -1,0 +1,74 @@
+name: Reviewed manual qualification evidence
+on:
+  workflow_dispatch:
+    inputs:
+      node22_run:
+        description: Successful exact-commit Qualification run for Node 22
+        required: true
+        type: string
+      node24_run:
+        description: Successful exact-commit Qualification run for Node 24
+        required: true
+        type: string
+      attestation:
+        description: Reviewed bounded JSON outcomes. No payloads, paths, transcripts, screenshots or credentials.
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: manual-evidence-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  reviewed:
+    if: github.repository == 'milocosmopolitan/redacton'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - env:
+          NODE22_RUN: ${{ inputs.node22_run }}
+          NODE24_RUN: ${{ inputs.node24_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-qualification-runs.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node22_run }}
+          pattern: bounded-host-evidence-*
+          merge-multiple: true
+          path: qualification/base-evidence
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node24_run }}
+          pattern: bounded-host-evidence-*
+          merge-multiple: true
+          path: qualification/base-evidence
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.node22_run }}
+          name: canonical-package
+          path: artifacts
+      - env:
+          NODE22_RUN: ${{ inputs.node22_run }}
+          NODE24_RUN: ${{ inputs.node24_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/apply-manual-evidence.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-manual-evidence
+          path: qualification/results/manual-evidence/*.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-manual-provenance
+          path: qualification/results/manual-review-provenance/review.json
+          if-no-files-found: error
+          retention-days: 14

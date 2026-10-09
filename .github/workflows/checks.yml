@@ -1,0 +1,134 @@
+name: Checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      code: ${{ steps.paths.outputs.code }}
+      portability: ${{ steps.paths.outputs.portability }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+            echo 'portability=true' >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only "$BASE" HEAD > "$RUNNER_TEMP/changed-paths"
+            if grep -Eq '^(mod/|helper/|tests/|scripts/|qualification/|\.github/|package(-lock)?\.json|tsconfig\.|biome\.json)' "$RUNNER_TEMP/changed-paths"; then echo 'code=true' >> "$GITHUB_OUTPUT"; else echo 'code=false' >> "$GITHUB_OUTPUT"; fi
+            if grep -Eq '^(mod/|helper/|scripts/|qualification/|tests/installers/|tests/(artifact-archive|installer).*\.test\.mjs$|\.github/|package(-lock)?\.json|docs/(COMPATIBILITY|PLATFORMS|CI)\.md|README\.md)' "$RUNNER_TEMP/changed-paths"; then echo 'portability=true' >> "$GITHUB_OUTPUT"; else echo 'portability=false' >> "$GITHUB_OUTPUT"; fi
+          fi
+  pure:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.16.0', '24.21.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-${{ matrix.node }}-${{ hashFiles('package-lock.json') }}
+      - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
+      - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check:pure
+      - run: npm run ci:identity
+  sdk:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      ANTHROPIC_BASE_URL: http://127.0.0.1:1
+      ANTHROPIC_API_KEY: qualification-only
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+      DISABLE_AUTOUPDATER: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-22.16.0-${{ hashFiles('package-lock.json') }}
+      - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
+      - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: |
+          echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude" >> "$GITHUB_ENV"
+          echo "CLAUDE_CONFIG_DIR=$RUNNER_TEMP/redacton-host-config" >> "$GITHUB_ENV"
+      - run: node scripts/install-ci-host.mjs "$RUNNER_TEMP/redacton-host"
+      - run: npm run typecheck
+      - run: npm run test:mod && npm run validate
+      - run: npm run ci:identity
+  package:
+    needs: changes
+    if: needs.changes.outputs.portability == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-22.16.0-${{ hashFiles('package-lock.json') }}
+      - run: npm config set cache "${{ runner.temp }}/npm-cache" --global
+      - run: npm install --global npm@10.9.2 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - id: artifact
+        run: node scripts/verify-artifact.mjs --native
+      - id: fixtures
+        run: npm run test:installer
+      - if: ${{ !cancelled() && steps.artifact.outcome == 'success' }}
+        run: node scripts/verify-installed-artifact.mjs --fixture-claude
+      - if: ${{ !cancelled() && steps.artifact.outcome == 'success' }}
+        run: npm run ci:identity
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.artifact.outcome == 'success' }}
+        with:
+          name: package-${{ matrix.os }}
+          path: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/SHA256SUMS
+          retention-days: 3
+  required:
+    if: always()
+    needs: [changes, pure, sdk, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node -e 'const n=JSON.parse(process.env.RESULTS); if(n.changes.result!=="success" || Object.values(n).some(v=>!["success","skipped"].includes(v.result))) process.exit(1)'

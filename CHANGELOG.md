@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Defined macOS/Linux/native Windows/WSL CLI target identities and conservative Node 22/24 floors, with historical verified scope and unqualified rows kept explicit.
+- Added portable prebuilt WASM candidate tar/ZIP artifacts, pure Node archive tooling, checksums/provenance and adversarial archive checks.
+- Added candidate Unix and native PowerShell installers that stage and self-check before replacing an existing installation.
+- Added cost-conscious deterministic/package CI and separate exact-commit host/release evidence gates. Missing platform and interactive evidence remains a blocker, not a support claim.
+- Made reusable host probes select an explicit pinned Claude binary and record its observed version without an RTK runtime dependency.
+
 ## 0.1.0
 
 - Added shared typed configuration controllers, immutable operation snapshots, safe cached status views and guided rule-management stages.

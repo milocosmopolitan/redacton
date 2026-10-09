@@ -12,11 +12,20 @@ import tempfile
 import termios
 import time
 import sys
+import subprocess
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 if os.environ.get("REDACTON_PYTE_PATH"):
     sys.path.insert(0, os.environ["REDACTON_PYTE_PATH"])
 import pyte
+
+host_binary = os.environ.get('CLAUDE_BINARY', 'claude')
+version_run = subprocess.run([host_binary, '--version'], capture_output=True, text=True, timeout=10)
+version_match = re.match(r'([0-9]+\.[0-9]+\.[0-9]+)\s', version_run.stdout)
+if version_run.returncode or not version_match:
+    raise SystemExit('HOST_VERSION_UNAVAILABLE')
+host_version = version_match.group(1)
 
 root = os.path.abspath(sys.argv[sys.argv.index('--plugin-root') + 1] if '--plugin-root' in sys.argv else '.')
 ux_mode = '--ux' in sys.argv
@@ -40,11 +49,11 @@ os.mkdir(config)
 with open(os.path.join(config, '.claude.json'), 'w') as stream:
     json.dump({'hasCompletedOnboarding': True, 'theme': 'dark', 'projects': {folder: {'hasTrustDialogAccepted': True}}}, stream)
 env = {key: os.environ[key] for key in ['PATH', 'HOME'] if key in os.environ}
-env.update({'TERM': 'xterm-256color', 'CLAUDE_CONFIG_DIR': config, 'ANTHROPIC_API_KEY': 'synthetic-local-only', 'REDACTON_SETTINGS_ROOT': os.path.join(folder,'settings'), 'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{server.server_port}', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'})
+env.update({'HOME': folder, 'DISABLE_AUTOUPDATER': '1', 'TERM': 'xterm-256color', 'CLAUDE_CONFIG_DIR': config, 'ANTHROPIC_API_KEY': 'synthetic-local-only', 'REDACTON_SETTINGS_ROOT': os.path.join(folder,'settings'), 'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{server.server_port}', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'})
 pid, master = pty.fork()
 if pid == 0:
     os.chdir(folder)
-    os.execvpe('claude', ['claude', '--plugin-dir', root, '--plugin-dir', os.path.join(fixture_root, 'qualification/ui-companion'), '--plugin-dir', os.path.join(fixture_root,'qualification/helper-counter'), '--allowedTools','Bash', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'], env)
+    os.execvpe(host_binary, [host_binary, '--plugin-dir', root, '--plugin-dir', os.path.join(fixture_root, 'qualification/ui-companion'), '--plugin-dir', os.path.join(fixture_root,'qualification/helper-counter'), '--allowedTools','Bash', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'], env)
 os.set_blocking(master, False)
 columns=int(os.environ.get('REDACTON_UI_COLUMNS','140'))
 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, columns, 0, 0))
@@ -326,7 +335,7 @@ try:
             with open(os.path.join(root,name),'rb') as source:
                 hashes[name]=hashlib.sha256(source.read()).hexdigest()
         with open(report_path,'w') as report:
-            json.dump({'hostVersion':'2.1.294','runtimeSourceSha256':hashes,'result':observations},report,indent=2)
+            json.dump({'hostVersion':host_version,'runtimeSourceSha256':hashes,'result':observations},report,indent=2)
     print(json.dumps(observations))
     if not observations['completed'] or model_requests or (ux_mode and observations['customToolExecutions']!=2) or (ux_mode and not all(observations[key] for key in ['previewOutcomesVisibleBeforeApply','autocompleteExactNames','localArgsRejected','formOpened','draftCreated','validated','previewed','applied','escapeClosed','uiAppliedCustomEffect','removed','reverted','offPanelWarning','offValidationRejected','offHelperCountUnchanged','offToolOriginalPreserved','warningBeforeTyping','warningAfterTyping','warningAfterActualBash'])):
         sys.exit(1)

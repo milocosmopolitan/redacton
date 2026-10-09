@@ -1,10 +1,10 @@
 {
   "name": "redacton",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "Local Claude Code credential protection",
+  "description": "Local Claude Code credential protection targeting macOS, Linux and Windows; qualification is platform-specific",
   "scripts": {
     "build": "node scripts/build-helper.mjs && node scripts/build-artifact.mjs",
     "build:helper": "node scripts/build-helper.mjs",
@@ -18,10 +18,16 @@
     "format": "biome check --write .",
     "check": "npm run typecheck && npm run lint && npm test",
     "sdk:types": "node scripts/test-mod.mjs --types",
-    "benchmark": "npm run build:helper && node --experimental-strip-types scripts/assess-quality.mjs"
+    "benchmark": "npm run build:helper && node --experimental-strip-types scripts/assess-quality.mjs",
+    "typecheck:pure": "npm run build:helper && tsc -p tsconfig.pure.json",
+    "check:pure": "npm run typecheck:pure && npm run lint && npm test",
+    "ci:identity": "node scripts/ci-identity.mjs",
+    "ci:host": "node scripts/qualify-host.mjs",
+    "release:gate": "node scripts/qualification-gate.mjs",
+    "test:installer": "node --test tests/installers/installer.test.mjs"
   },
   "engines": {
-    "node": "22.x || 24.x"
+    "node": ">=22.16.0 <23 || >=24.21.0 <25"
   },
   "dependencies": {
     "@redact-secret/core": "0.1.0-beta.14"

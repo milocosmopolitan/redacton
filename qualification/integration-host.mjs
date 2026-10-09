@@ -4,6 +4,11 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import {
+  claudeBinary,
+  hostVersion,
+  isolatedPlatformEnvironment,
+} from './host-runtime.mjs';
 
 // Synthetic-only loopback endpoint; no payloads are persisted or printed.
 const dir = await mkdtemp(join(tmpdir(), 'redacton-spike-'));
@@ -15,7 +20,11 @@ const synthetic = custom
   ? 'syntheticcred_ABCDEF0123456789'
   : 'ghp_SYNTHETICREVOKED00000000000000000000';
 const rootArgument = process.argv.indexOf('--plugin-root');
-const root = resolve(rootArgument >= 0 ? process.argv[rootArgument + 1] : '.');
+const root = resolve(
+  rootArgument >= 0
+    ? process.argv[rootArgument + 1]
+    : (process.env.REDACTON_PLUGIN_ROOT ?? '.'),
+);
 await writeFile(join(dir, 'synthetic.txt'), `앞 ${synthetic} 뒤\n`);
 const input =
   mode === 'read'
@@ -95,10 +104,8 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
 async function launch(prompt) {
   const child = spawn(
-    'rtk',
+    claudeBinary,
     [
-      'proxy',
-      'claude',
       '-p',
       prompt,
       '--plugin-dir',
@@ -117,8 +124,9 @@ async function launch(prompt) {
     {
       cwd: dir,
       env: {
+        ...isolatedPlatformEnvironment(dir),
         PATH: process.env.PATH,
-        HOME: process.env.HOME,
+        HOME: dir,
         CLAUDE_CONFIG_DIR: join(dir, 'config'),
         REDACTON_SETTINGS_ROOT: join(dir, 'settings'),
         ANTHROPIC_API_KEY: 'synthetic-local-only',
@@ -418,7 +426,7 @@ try {
           .digest('hex');
       await writeFile(
         resolve(process.argv[reportArgument + 1]),
-        `${JSON.stringify({ hostVersion: '2.1.294', node: process.version, platform: process.platform, arch: process.arch, sourceSha256, result: report }, null, 2)}\n`,
+        `${JSON.stringify({ hostVersion, node: process.version, platform: process.platform, arch: process.arch, sourceSha256, result: report }, null, 2)}\n`,
       );
     }
     // An incomplete run is not compatibility evidence, even if no raw marker was observed.
