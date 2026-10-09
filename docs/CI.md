@@ -38,6 +38,8 @@ Choose `scope: package` to run the native package/installer matrix without downl
 
 For a failed UI or guarded-error probe, select `probe: terminal-ui` or `probe: guarded-errors` with one target and `scope: host`. Canonical package provenance and installer prerequisites still run; other host gates remain blocked with `NOT_RUN`, so diagnostic evidence cannot qualify a release. Diagnostics whitelist UI stages, focused button, receipts and action counts, or fault modes and bounded boundary counters. Raw screens, payloads and stderr remain excluded. The default `probe: all` preserves full qualification checks.
 
+Observed limitation: [Linux Node 22 UI run 37927184889](https://github.com/milocosmopolitan/redacton/actions/runs/37927184889), source `81cd12b`, completed the 80×40 flow but failed the 140×40 OFF form before Create draft acquired observed focus. The UI gate remains `failed/PROBE_FAILED`; diagnostic success in other gates cannot qualify this row. [Windows Node 24 fault run 37926248793](https://github.com/milocosmopolitan/redacton/actions/runs/37926248793) passed all eleven synthetic fault modes after replacing shell-relative counter writes with a test-owned Node fixture.
+
 Strict `gateCodes` distinguish pass, unavailable/manual/platform prerequisites and failed/timeout/process outcomes. Only explicit race/UI probes may use exit 2 for an unavailable capability. The race probe holds an actual Bash execution behind a release file and requires the actual toggle acknowledgement before release/model delivery. If headless streaming serializes commands, `RACE_PHASE_UNAVAILABLE` stays blocked, rather than crediting a subsequent toggle as a race.
 
 ## Reviewed external manual evidence
