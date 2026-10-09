@@ -15,6 +15,8 @@ $exitCode = 0
 $safeNodePlatform = 'unknown'
 $safeNodeArchitecture = 'unknown'
 $safeNodeVersion = 'unknown'
+$nodeOptionsBefore = $env:NODE_OPTIONS
+$nodePathBefore = $env:NODE_PATH
 function Get-RedactonFileDigest([string]$FilePath) {
     # Stream through Framework cryptography, without optional module autoloading.
     $stream = [IO.File]::OpenRead($FilePath)
@@ -33,6 +35,9 @@ try {
     $osArchitecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
     if ($env:OS -ne 'Windows_NT' -or $osArchitecture -ne 'AMD64') { throw 'Use native Windows x64 PowerShell. WSL uses install.sh in its Linux filesystem.' }
     if ($ReleaseVersion -eq '0.1.0') { throw 'Historical release is not a Windows artifact. Supply a new reviewed candidate release.' }
+    # Disable inherited Node preloads before any Node validation or helper launch.
+    $env:NODE_OPTIONS = ''
+    $env:NODE_PATH = ''
     $stage = 'NODE_LOOKUP'
     $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Path
     if (!$node) { throw 'Native Node executable is unavailable.' }
@@ -161,6 +166,8 @@ try {
     [Console]::Error.WriteLine("Redacton: INSTALL_$stage failed category=$category. Node platform=$safeNodePlatform arch=$safeNodeArchitecture version=$safeNodeVersion. Check Node/Claude prerequisites, reviewed archive digest and a writable short path. Existing installation preserved.")
     $exitCode = 1
 } finally {
+    $env:NODE_OPTIONS = $nodeOptionsBefore
+    $env:NODE_PATH = $nodePathBefore
     try {
         if ($previous -and !(Test-Path -LiteralPath $current)) { Move-Item -LiteralPath $previous -Destination $current }
     } catch {

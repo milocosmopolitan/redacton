@@ -373,6 +373,7 @@ test('concurrent writers have one winner; active locks block safely and dead own
     await writeFile(
       lock,
       JSON.stringify({
+        ...(await store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
         pid: dead.pid,
         nonce: '22222222-2222-4222-8222-222222222222',
       }),
@@ -573,8 +574,19 @@ test('multiple real processes contending to recover one dead lease retain exactl
     await writeFile(
       join(root, 'personal/.settings.lock'),
       JSON.stringify({
+        ...(await store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
         pid: dead.pid,
         nonce: '33333333-3333-4333-8333-333333333333',
+      }),
+    );
+    const original = JSON.parse(
+      await readFile(join(root, 'personal/.settings.lock'), 'utf8'),
+    );
+    await writeFile(
+      join(root, `personal/.recover-${original.nonce}`),
+      JSON.stringify({
+        ...original,
+        nonce: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       }),
     );
     const input = JSON.stringify({
@@ -836,6 +848,7 @@ test('a lease replaced while inspecting its dead owner stays closed and preserve
     await writeFile(
       lock,
       JSON.stringify({
+        ...(await store.ownLease('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
         pid: dead.pid,
         nonce: '44444444-4444-4444-8444-444444444444',
       }),
@@ -863,5 +876,108 @@ test('a lease replaced while inspecting its dead owner stays closed and preserve
       syncBuiltinESMExports();
     }
     assert.deepEqual(JSON.parse(await readFile(lock, 'utf8')), live);
+    assert.deepEqual(await load(store), initial);
+  }));
+
+test('PID reuse reclaims only a verified different process start, never a matching live writer', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const lock = join(root, 'personal/.settings.lock');
+    const owner = await store.ownLease('66666666-6666-4666-8666-666666666666');
+    await writeFile(lock, JSON.stringify(owner));
+    await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+    assert.deepEqual(JSON.parse(await readFile(lock, 'utf8')), owner);
+    await writeFile(
+      lock,
+      JSON.stringify({ ...owner, start: 'abandoned-start' }),
+    );
+    assert.deepEqual((await save(store, initial)).document, document);
+  }));
+
+test('EPERM, shared namespace mismatch and legacy unknown ownership preserve the lease', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const lock = join(root, 'personal/.settings.lock');
+    const owner = await store.ownLease('77777777-7777-4777-8777-777777777777');
+    const kill = process.kill;
+    await writeFile(lock, JSON.stringify(owner));
+    process.kill = () => {
+      throw Object.assign(new Error('synthetic'), { code: 'EPERM' });
+    };
+    try {
+      await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+    } finally {
+      process.kill = kill;
+    }
+    for (const value of [
+      { ...owner, host: 'f'.repeat(64) },
+      { pid: owner.pid, nonce: owner.nonce },
+    ]) {
+      await writeFile(lock, JSON.stringify(value));
+      await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+      assert.deepEqual(JSON.parse(await readFile(lock, 'utf8')), value);
+    }
+    // Explicit recovery uses a new private namespace, without deleting old data.
+    const recovered = new SettingsStore(join(root, 'recovered'));
+    assert.equal(
+      (await save(recovered, await load(recovered))).document.rules.length,
+      1,
+    );
+    assert.deepEqual(await load(store), initial);
+  }));
+
+test('a genuinely abandoned recovery claimant recovers within bounded arbitration', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const lock = join(root, 'personal/.settings.lock');
+    const dead = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+    const old = {
+      ...(await store.ownLease('88888888-8888-4888-8888-888888888888')),
+      pid: dead.pid,
+    };
+    const claim = { ...old, nonce: '99999999-9999-4999-8999-999999999999' };
+    await writeFile(lock, JSON.stringify(old));
+    await writeFile(
+      join(root, `personal/.recover-${old.nonce}`),
+      JSON.stringify(claim),
+    );
+    assert.deepEqual((await save(store, initial)).document, document);
+    assert.deepEqual((await readdir(join(root, 'personal'))).sort(), [
+      '.identity',
+      'settings.json',
+    ]);
+  }));
+
+test('relative and empty personal settings roots fail with fixed errors; shared Unix directory permissions are refused', async () => {
+  for (const root of ['', 'relative-settings']) {
+    await assert.rejects(load(new SettingsStore(root)), {
+      message: 'INVALID_REQUEST',
+    });
+  }
+  if (process.platform === 'win32') return;
+  await fixture(async (root, store) => {
+    await load(store);
+    await fs.chmod(join(root, 'personal'), 0o755);
+    await assert.rejects(load(store), { message: 'SETTINGS_UNAVAILABLE' });
+  });
+});
+
+test('deep crashed claimant chains stay busy without deleting indeterminate leases', async () =>
+  fixture(async (root, store) => {
+    const initial = await load(store);
+    const base = await store.ownLease('00000000-0000-4000-8000-000000000000');
+    let path = join(root, 'personal/.settings.lock');
+    for (let depth = 0; depth < 6; depth++) {
+      const owner = {
+        ...base,
+        start: 'abandoned-start',
+        nonce: `${String(depth).padStart(8, '0')}-0000-4000-8000-000000000000`,
+      };
+      await writeFile(path, JSON.stringify(owner));
+      path = join(root, `personal/.recover-${owner.nonce}`);
+    }
+    const before = (await readdir(join(root, 'personal'))).sort();
+    await assert.rejects(save(store, initial), { message: 'SETTINGS_BUSY' });
+    assert.deepEqual((await readdir(join(root, 'personal'))).sort(), before);
     assert.deepEqual(await load(store), initial);
   }));
