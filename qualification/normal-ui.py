@@ -62,7 +62,7 @@ terminal = pyte.Stream(screen)
 raw = ''
 exit_code = None
 stage = 'startup'
-off_action_counts = {'createDraft': 0, 'validate': 0}
+off_action_counts = {'createDraft': 0, 'validate': 0, 'focusTabs': 0}
 stage_time = time.monotonic()
 trust_answered = False
 key_answered = False
@@ -268,6 +268,8 @@ try:
                 send('\x15');time.sleep(.15);send('16',True);stage='off-length';stage_time=time.monotonic()
             elif stage=='off-length' and focused('Create draft') and time.monotonic()-stage_time>.3:
                 send('',True);stage='off-draft';raw=''
+            elif stage=='off-length' and 'Local panel has keyboard focus' in view and time.monotonic()-stage_time>.5 and off_action_counts['focusTabs'] < 12:
+                send('\t');off_action_counts['focusTabs'] += 1;stage_time=time.monotonic()
             elif stage=='off-draft' and focused('Validate') and (visible_words('Draft ready',view) or '· editing · base' in view):
                 send('',True);stage='off-validate';raw=''
             elif stage=='off-validate' and visible_words('TURN_ON_TO_VALIDATE',view):

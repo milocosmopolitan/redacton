@@ -90,9 +90,9 @@ export function terminalUiState(value) {
     !buttons.has(value.focusedButton) ||
     !keys(value.receipts, 'draftReady,editingDraft,rejected') ||
     !Object.values(value.receipts).every((item) => typeof item === 'boolean') ||
-    !keys(value.actions, 'createDraft,validate') ||
+    !keys(value.actions, 'createDraft,focusTabs,validate') ||
     !Object.values(value.actions).every(
-      (item) => Number.isSafeInteger(item) && item >= 0 && item <= 10,
+      (item) => Number.isSafeInteger(item) && item >= 0 && item <= 12,
     )
   )
     return null;
@@ -107,6 +107,7 @@ export function terminalUiState(value) {
     actions: {
       createDraft: value.actions.createDraft,
       validate: value.actions.validate,
+      focusTabs: value.actions.focusTabs,
     },
   };
 }

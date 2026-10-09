@@ -33,7 +33,7 @@ test('terminal UI state accepts only finite stages, focus, receipts and action c
     stage: 'off-draft',
     focusedButton: 'Validate',
     receipts: { rejected: false, draftReady: true, editingDraft: true },
-    actions: { createDraft: 1, validate: 0 },
+    actions: { createDraft: 1, validate: 0, focusTabs: 0 },
   };
   assert.deepEqual(terminalUiState(state), state);
   const row = {
@@ -48,7 +48,7 @@ test('terminal UI state accepts only finite stages, focus, receipts and action c
     { stage: 'private' },
     { focusedButton: 'private' },
     { screen: 'private' },
-    { actions: { createDraft: 11, validate: 0 } },
+    { actions: { createDraft: 1, validate: 0, focusTabs: 13 } },
     { receipts: { rejected: 'private', draftReady: true, editingDraft: true } },
   ])
     assert.equal(terminalUiState({ ...state, ...patch }), null);
