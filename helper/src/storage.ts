@@ -56,12 +56,14 @@ export function sameFileIdentity(
 ): boolean {
   if (
     ![left.dev, right.dev, left.ino, right.ino].every(
-      (value) => typeof value === 'bigint' && value >= 0n,
+      (value) =>
+        typeof value === 'bigint' && value >= -(1n << 63n) && value < 1n << 63n,
     )
   )
     return false;
   // Older Windows libuv returns 64-bit path serials and 32-bit handle serials.
-  // Match its corrected 32-bit device identity, retaining the exact file ID.
+  // Node exposes both IDs through signed BigInt64Array, including negative IDs.
+  // Match corrected Windows device width, retaining the exact signed file ID.
   const device = (value: bigint) =>
     platform === 'win32' ? value & 0xffffffffn : value;
   return left.ino === right.ino && device(left.dev) === device(right.dev);

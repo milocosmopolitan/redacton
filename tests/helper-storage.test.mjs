@@ -71,7 +71,24 @@ test('Windows volume serial width differences retain exact device and file ident
     sameFileIdentity(path, { ...handle, ino: 12346n }, 'win32'),
     false,
   );
-  for (const invalid of [0xabcdef01, '2882400001', -1n]) {
+  const signedPath = {
+    dev: BigInt.asIntN(64, 0xfedcba98abcdef01n),
+    ino: -12345n,
+  };
+  const signedHandle = { dev: 0xabcdef01n, ino: -12345n };
+  assert.equal(sameFileIdentity(signedPath, signedHandle, 'win32'), true);
+  assert.equal(sameFileIdentity(signedHandle, signedPath, 'win32'), true);
+  assert.equal(sameFileIdentity(signedPath, signedPath, 'linux'), true);
+  assert.equal(
+    sameFileIdentity(signedPath, { ...signedHandle, ino: -12346n }, 'win32'),
+    false,
+  );
+  for (const invalid of [
+    0xabcdef01,
+    '2882400001',
+    1n << 63n,
+    -(1n << 63n) - 1n,
+  ]) {
     assert.equal(
       sameFileIdentity({ ...handle, dev: invalid }, handle, 'win32'),
       false,
@@ -82,6 +99,52 @@ test('Windows volume serial width differences retain exact device and file ident
     );
   }
 });
+
+test('owned regular-file lstat and fstat identities agree without exposing filesystem IDs', async () =>
+  fixture(async (root) => {
+    const path = join(root, 'identity-probe');
+    await writeFile(path, 'x');
+    const before = await fs.lstat(path, { bigint: true });
+    const handle = await fs.open(path, constants.O_RDONLY);
+    try {
+      const opened = await handle.stat({ bigint: true });
+      const after = await fs.lstat(path, { bigint: true });
+      const checks = {
+        regular: [before, opened, after].every((value) => value.isFile()),
+        noSymlinks: !before.isSymbolicLink() && !after.isSymbolicLink(),
+        singleLink: [before, opened, after].every(
+          (value) => value.nlink === 1n,
+        ),
+        boundedSize: [before, opened, after].every(
+          (value) => value.size === 1n,
+        ),
+        inodeEqual: before.ino === opened.ino && after.ino === opened.ino,
+        normalizedDeviceEqual:
+          (before.dev & 0xffffffffn) === (opened.dev & 0xffffffffn) &&
+          (after.dev & 0xffffffffn) === (opened.dev & 0xffffffffn),
+        beforeIdentity: sameFileIdentity(before, opened),
+        afterIdentity: sameFileIdentity(after, opened),
+      };
+      const sign = (value) =>
+        value < 0n ? 'negative' : value === 0n ? 'zero' : 'positive';
+      assert.equal(
+        Object.values(checks).every(Boolean),
+        true,
+        JSON.stringify({
+          code: 'STORAGE_IDENTITY_PROBE',
+          ...checks,
+          beforeDeviceSign: sign(before.dev),
+          openedDeviceSign: sign(opened.dev),
+          afterDeviceSign: sign(after.dev),
+          beforeInodeSign: sign(before.ino),
+          openedInodeSign: sign(opened.ino),
+          afterInodeSign: sign(after.ino),
+        }),
+      );
+    } finally {
+      await handle.close();
+    }
+  }));
 
 test('absent scope identities are stable/private and unapproved project reads never write repository files', async () =>
   fixture(async (root, store) => {
