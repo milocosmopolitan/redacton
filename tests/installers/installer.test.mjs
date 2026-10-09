@@ -116,6 +116,7 @@ test('Candidate installation preserves existing installs across hash and readine
           REDACTON_ARCHIVE_PATH: archive,
           REDACTON_ARCHIVE_SHA256: hash,
           FIXTURE_INSTALLER_SCRIPT: resolve('scripts/install.ps1'),
+          FIXTURE_MOVE_TRACE: join(dir, 'move-trace'),
         },
       });
     }
@@ -275,19 +276,32 @@ try {
       writeFileSync(
         wrapper,
         String.raw`param([string]$ReleaseVersion, [string]$ArchiveSha256, [string]$ArchivePath, [string]$InstallDirectory)
+try { Import-Module Microsoft.PowerShell.Management -ErrorAction Stop } catch { [Console]::Error.WriteLine('FIXTURE_MOVE_PROXY_SETUP_FAILED'); exit 1 }
 function Move-Item {
   [CmdletBinding()]
   param([string]$LiteralPath, [string]$Destination)
-  if ($LiteralPath -match '[\\/]\.install-[^\\]+[\\/]redacton-0\.2\.0$' -and [IO.Path]::GetFileName($Destination) -eq 'current') { throw 'SYNTHETIC_ACTIVATION_FAILURE' }
+  $sourceLeaf = [IO.Path]::GetFileName($LiteralPath)
+  $destinationLeaf = [IO.Path]::GetFileName($Destination)
+  $sourceParent = [IO.Path]::GetFileName([IO.Path]::GetDirectoryName($LiteralPath))
+  if ($sourceLeaf -eq 'redacton-0.2.0' -and $sourceParent.StartsWith('.install-') -and $destinationLeaf -eq 'current') {
+    [IO.File]::AppendAllText($env:FIXTURE_MOVE_TRACE, 'inject' + [Environment]::NewLine)
+    throw 'SYNTHETIC_ACTIVATION_FAILURE'
+  }
   Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+  if ($sourceLeaf -eq 'current' -and $destinationLeaf.StartsWith('.previous-')) { [IO.File]::AppendAllText($env:FIXTURE_MOVE_TRACE, 'old-rename' + [Environment]::NewLine) }
+  if ($sourceLeaf.StartsWith('.previous-') -and $destinationLeaf -eq 'current') { [IO.File]::AppendAllText($env:FIXTURE_MOVE_TRACE, 'restore' + [Environment]::NewLine) }
 }
-& $env:FIXTURE_INSTALLER_SCRIPT -ReleaseVersion $ReleaseVersion -ArchiveSha256 $ArchiveSha256 -ArchivePath $ArchivePath -InstallDirectory $InstallDirectory
+. $env:FIXTURE_INSTALLER_SCRIPT -ReleaseVersion $ReleaseVersion -ArchiveSha256 $ArchiveSha256 -ArchivePath $ArchivePath -InstallDirectory $InstallDirectory
 `,
       );
       hash = build();
       const failedSwitch = installCandidate(hash, wrapper);
       assert.notEqual(failedSwitch.status, 0);
       assert.match(failedSwitch.stderr, /INSTALL_ACTIVATION/);
+      assert.deepEqual(
+        readFileSync(join(dir, 'move-trace'), 'utf8').trim().split(/\r?\n/),
+        ['old-rename', 'inject', 'restore'],
+      );
       assert.equal(
         readFileSync(join(install, 'current', 'previous-marker'), 'utf8'),
         'preserve',
