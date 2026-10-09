@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -18,7 +19,10 @@ import { archiveZip } from '../../scripts/artifact-archive.mjs';
 test('Native Windows prerequisites, drive paths, long paths and printed launch argv', {
   skip: process.platform !== 'win32',
 }, async (t) => {
-  const temporary = mkdtempSync(join(tmpdir(), "redacton contract 한글 ' "));
+  // Windows tmpdir may use an 8.3 alias that PowerShell resolves to a long name.
+  const temporary = realpathSync.native(
+    mkdtempSync(join(tmpdir(), "redacton contract 한글 ' ")),
+  );
   try {
     const bin = join(temporary, 'bin');
     mkdirSync(bin);

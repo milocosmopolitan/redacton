@@ -17,10 +17,18 @@ $script:rowFailure = 'unknown'
 $runtimeVersion = 'unknown'
 $wslVersion = 'unknown'
 $architecture = 'unknown'
+$failureCategory = 'none'
+$script:processPhase = 'NONE'
+$script:lastExitCode = $null
+$failureProcessPhase = 'NONE'
+$failureExitCode = $null
 $oldLocal = $env:LOCALAPPDATA
 $oldUser = $env:USERPROFILE
 $oldConfig = $env:CLAUDE_CONFIG_DIR
+$oldPath = $env:PATH
 function Invoke-ProbeProcess([string]$Executable, [string[]]$Arguments, [int]$Seconds = 120) {
+    $script:processPhase = 'NONE'
+    $script:lastExitCode = $null
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Executable
     $info.UseShellExecute = $false
@@ -30,12 +38,18 @@ function Invoke-ProbeProcess([string]$Executable, [string[]]$Arguments, [int]$Se
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $info
     try {
+        $script:processPhase = 'START'
         if (!$process.Start()) { throw 'PROBE_START_FAILED' }
+        $script:processPhase = 'READ'
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
+        $script:processPhase = 'WAIT'
         if (!$process.WaitForExit($Seconds * 1000)) { $process.Kill($true); $process.WaitForExit(); throw 'PROBE_TIMEOUT' }
+        $script:processPhase = 'RESULT'
         $output = $stdout.GetAwaiter().GetResult()
         $errorOutput = $stderr.GetAwaiter().GetResult()
+        $script:processPhase = 'EXIT'
+        $script:lastExitCode = [int]$process.ExitCode
         if ($process.ExitCode -ne 0) {
             $diagnostic = ($output + $errorOutput).Replace([string][char]0, '')
             if ($diagnostic -match '(?i)0x(80370102|80370114|8007019e)') { $script:wslErrorCode = $Matches[0].ToLowerInvariant() }
@@ -52,11 +66,22 @@ function Get-ProbeDigest([string]$Path) {
     finally { $stream.Dispose(); $hash.Dispose() }
 }
 try {
-    $wsl = (Get-Command wsl.exe -CommandType Application).Path
-    $node = (Get-Command node.exe -CommandType Application).Path
+    $stage = 'WSL_LOOKUP'
+    $wsl = (Get-Command wsl.exe -CommandType Application | Select-Object -First 1).Path
+    $stage = 'NODE_LOOKUP'
+    $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Path
+    $stage = 'CLAUDE_LOOKUP'
+    if ($env:CLAUDE_BINARY) {
+        if (![IO.Path]::IsPathRooted($env:CLAUDE_BINARY) -or ![IO.File]::Exists($env:CLAUDE_BINARY)) { throw 'PINNED_NATIVE_HOST_UNAVAILABLE' }
+        $nativeHost = [IO.Path]::GetFullPath($env:CLAUDE_BINARY)
+        if ([IO.Path]::GetFileName($nativeHost) -ne 'claude.exe') { throw 'PINNED_NATIVE_HOST_UNAVAILABLE' }
+        $env:PATH = [IO.Path]::GetDirectoryName($nativeHost) + ';' + $oldPath
+    }
     $null = Get-Command claude
+    $stage = 'WSL_VERSION'
     $versionOutput = (Invoke-ProbeProcess $wsl @('--version')).Replace([string][char]0, '')
     if (($versionOutput -split "`r?`n")[0] -match '([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(\.[0-9]{1,3})?)') { $wslVersion = $Matches[1] }
+    $stage = 'TEMP_DIRECTORY'
     [IO.Directory]::CreateDirectory($temporary) | Out-Null
     $stage = 'ROOTFS_DOWNLOAD'
     $rootfs = Join-Path $temporary 'ubuntu-rootfs.tar.gz'
@@ -190,7 +215,11 @@ step=SETTINGS_IDENTITY
         try {
             $null = Invoke-ProbeProcess $wsl @('-d', $distro, '-u', 'redacton', '--exec', '/bin/bash', "$linuxTemporary/row.sh", $nodeVersion, $linuxTemporary) 240
             $rows += @{ node = $nodeVersion; status = 'passed'; stage = 'COMPLETE' }
-        } catch { $rows += @{ node = $nodeVersion; status = 'failed'; stage = $script:rowFailure } }
+        } catch {
+            $failureProcessPhase = $script:processPhase
+            $failureExitCode = $script:lastExitCode
+            $rows += @{ node = $nodeVersion; status = 'failed'; stage = $script:rowFailure; processPhase = $script:processPhase; exitCode = $script:lastExitCode }
+        }
     }
     $stage = 'IDENTITY_SEPARATION'
     if ([IO.File]::ReadAllText((Join-Path $nativeSettings 'identity')) -ne 'native-only' -or [IO.File]::ReadAllText((Join-Path $nativeCurrent 'identity')) -ne 'native-only') { throw 'NATIVE_IDENTITY_CHANGED' }
@@ -199,12 +228,24 @@ step=SETTINGS_IDENTITY
     $stage = 'COMPLETE'
     $exitCode = 0
 } catch {
+    if ($stage -ne 'INSTALLATION_ROWS') {
+        $failureProcessPhase = $script:processPhase
+        $failureExitCode = $script:lastExitCode
+    }
+    $failureCategory = switch ($_.Exception.GetType().Name) {
+        'CommandNotFoundException' { 'COMMAND_NOT_FOUND' }
+        'ParameterBindingException' { 'PARAMETER_BINDING' }
+        'MethodInvocationException' { 'METHOD_INVOCATION' }
+        'RuntimeException' { 'REJECTED' }
+        default { 'OTHER' }
+    }
     if (($stage -in 'WSL2_IMPORT', 'WSL2_BOOT') -and ($script:wslErrorCode -in '0x80370102', '0x80370114', '0x8007019e')) { $status = 'blocked' }
     [Console]::Error.WriteLine("WSL_PROBE_$stage")
 } finally {
     $env:LOCALAPPDATA = $oldLocal
     $env:USERPROFILE = $oldUser
     $env:CLAUDE_CONFIG_DIR = $oldConfig
+    $env:PATH = $oldPath
     if ($registered) {
         try {
             $existing = Invoke-ProbeProcess 'wsl.exe' @('--list', '--quiet') 60
@@ -212,11 +253,14 @@ step=SETTINGS_IDENTITY
             $names = $existing.Replace([string][char]0, '') -split "`r?`n" | ForEach-Object { $_.Trim([char[]]@([char]0xfeff, [char]0xfffd, [char]32, [char]13, [char]10)) }
             if ($names -contains $distro) { $null = Invoke-ProbeProcess 'wsl.exe' @('--unregister', $distro) 60 }
         }
-        catch { $status = 'failed'; $stage = 'CLEANUP'; $exitCode = 1; [Console]::Error.WriteLine('WSL_PROBE_CLEANUP') }
+        catch {
+            if ($status -eq 'passed') { $failureProcessPhase = $script:processPhase; $failureExitCode = $script:lastExitCode }
+            $status = 'failed'; $stage = 'CLEANUP'; $exitCode = 1; [Console]::Error.WriteLine('WSL_PROBE_CLEANUP')
+        }
     }
     try { if ([IO.Directory]::Exists($temporary)) { [IO.Directory]::Delete($temporary, $true) } }
     catch { $status = 'failed'; $stage = 'CLEANUP'; $exitCode = 1; [Console]::Error.WriteLine('WSL_PROBE_CLEANUP') }
-    $report = @{ schemaVersion = 1; check = 'wsl2-installation-only'; status = $status; stage = $stage; actualWsl2Boot = $booted; wslVersion = $wslVersion; linuxKernelVersion = $runtimeVersion; architecture = $architecture; prerequisiteErrorCode = $script:wslErrorCode; rows = @($rows); releaseQualification = 'not-inferred' } | ConvertTo-Json -Depth 4 -Compress
+    $report = @{ schemaVersion = 1; check = 'wsl2-installation-only'; status = $status; stage = $stage; failureCategory = $failureCategory; failureProcessPhase = $failureProcessPhase; failureExitCode = $failureExitCode; actualWsl2Boot = $booted; wslVersion = $wslVersion; linuxKernelVersion = $runtimeVersion; architecture = $architecture; prerequisiteErrorCode = $script:wslErrorCode; rows = @($rows); releaseQualification = 'not-inferred' } | ConvertTo-Json -Depth 4 -Compress
     $results = Join-Path $source 'qualification/results'
     [IO.Directory]::CreateDirectory($results) | Out-Null
     [IO.File]::WriteAllText((Join-Path $results 'wsl-installation.json'), $report)
