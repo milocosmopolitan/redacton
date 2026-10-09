@@ -19,6 +19,19 @@ const root = resolve(process.env.REDACTON_PLUGIN_ROOT ?? '.');
 const synthetic = 'ghp_SYNTHETICREVOKED00000000000000000000';
 const dir = await mkdtemp(join(tmpdir(), 'redacton-fault-'));
 const plugin = join(dir, 'plugin');
+const toolFixture = join(dir, 'tool-output.mjs');
+await writeFile(
+  toolFixture,
+  `import {appendFileSync} from 'node:fs';
+appendFileSync(new URL('./counter',import.meta.url),'x');
+process.stdout.write(${JSON.stringify(synthetic)}+'\\n');
+`,
+);
+// Bash executes the measured Node directly. Counter writes use an absolute URL
+// inside the fixture, avoiding shell redirection and host working-directory rules.
+const shellQuote = (path) =>
+  `'${path.replaceAll('\\', '/').replaceAll("'", "'\\''")}'`;
+const toolCommand = `${shellQuote(process.execPath)} ${shellQuote(toolFixture)}`;
 const modes = [
   'invalid-json',
   'mismatch-id',
@@ -131,7 +144,7 @@ try {
                 id: 'fault_tool_1',
                 name: 'Bash',
                 input: {
-                  command: `printf x >> counter; printf '%s\\n' '${synthetic}'`,
+                  command: toolCommand,
                 },
               },
             ]
@@ -293,21 +306,26 @@ try {
         await readFile(join(dir, 'counter'), 'utf8').catch(() => '')
       ).length;
       let timeoutChildAlive = null;
+      let timeoutCode = null;
       if (mode === 'timeout') {
         const pid = Number(
-          await readFile(join(plugin, 'helper/dist/timeout-pid'), 'utf8'),
+          await readFile(join(plugin, 'helper/dist/timeout-pid'), 'utf8').catch(
+            () => '',
+          ),
         );
         if (!Number.isSafeInteger(pid) || pid <= 0)
-          throw new Error('INVALID_TIMEOUT_PID');
-        try {
-          process.kill(pid, 0);
-          timeoutChildAlive = true;
-        } catch (error) {
-          if (error.code !== 'ESRCH')
-            throw new Error('TIMEOUT_PID_CHECK_FAILED');
-          timeoutChildAlive = false;
+          timeoutCode = 'INVALID_TIMEOUT_PID';
+        else {
+          try {
+            process.kill(pid, 0);
+            timeoutChildAlive = true;
+          } catch (error) {
+            if (error.code !== 'ESRCH')
+              timeoutCode = 'TIMEOUT_PID_CHECK_FAILED';
+            else timeoutChildAlive = false;
+          }
+          if (timeoutChildAlive) process.kill(pid, 'SIGKILL');
         }
-        if (timeoutChildAlive) process.kill(pid, 'SIGKILL');
       }
       const report = {
         mode,
@@ -344,6 +362,7 @@ try {
           readinessUnavailable: report.readinessUnavailable,
         }),
       );
+      if (timeoutCode) throw new Error(timeoutCode);
       const promptFault = mode === 'prompt-invalid' || mode === 'missing-node';
       if (
         result.exitCode !== 0 ||
@@ -387,7 +406,7 @@ try {
     );
     await writeFile(
       resolve('qualification/results/failure-host-report.md'),
-      `# Actual host process-failure qualification\n\nClaude Code ${hostVersion}, Node ${process.version}, ${process.platform} ${process.arch}. A test-owned temporary copy of the product plugin replaced only its helper with synthetic fault modes. A loopback Anthropic-format endpoint inspected real host request JSON in memory. Existing user settings/transcripts were not loaded; temporary configuration, copied dependencies and counters were removed. No raw payload, stderr, input path or matched value was recorded.\n\nNine tool-result fault modes passed: invalid JSON, mismatched request ID, duplicate segment IDs, missing segments, unknown status, missing helper after successful readiness/prompt, an actual engine policy callback throw, 5 MiB stdout exceeding the inspected 4 MiB host capture cap, and an actual helper sleep exceeding the host's 2,000 ms process timeout. Each run produced exactly two model requests and one errored tool result with REDACTON_WITHHELD, excluded the synthetic credential from tool-result content, and executed Bash exactly once according to its nonsecret counter. The timeout child PID was checked and was no longer alive. Total CLI timings include host startup and are not helper latency measurements. Exact counters and timings are in [failure-host-report.json](failure-host-report.json).\n\nA separate malformed-helper response during prompt submission produced zero model requests and zero tool executions. A missing-Node case changed only the test-owned temporary Mod process argv to a nonexistent executable; actual host process startup failed, readiness reported unavailable, and the protected prompt produced zero model requests or tool executions. This is a tested pre-delivery prompt withholding path. The synthetic credential remained present in the model-issued Bash argument, which is explicitly outside coverage; tool-result checks exclude those arguments.\n\nReproduce with \`rtk proxy node qualification/failure-host.mjs\`. Each CLI launch is bounded to 30 seconds. Protocol input-size boundaries and queue saturation also have unit/SDK evidence, while this probe exercises oversized child stdout and actual engine policy failure. The process truncation flag itself was not captured at the SDK process boundary, so the observed withholding does not distinguish host truncation from the parent response-size guard. Cancellation was not injected because the installed SDK test call interface exposes no supported abort control. These results do not establish immunity to arbitrary simultaneous outer/catch-handler failure or a platform matrix.\n`,
+      `# Actual host process-failure qualification\n\nClaude Code ${hostVersion}, Node ${process.version}, ${process.platform} ${process.arch}. A test-owned temporary copy of the product plugin replaced only its helper with synthetic fault modes. A loopback Anthropic-format endpoint inspected real host request JSON in memory. Existing user settings/transcripts were not loaded; temporary configuration, copied dependencies and counters were removed. No raw payload, stderr, input path or matched value was recorded.\n\nNine tool-result fault modes passed: invalid JSON, mismatched request ID, duplicate segment IDs, missing segments, unknown status, missing helper after successful readiness/prompt, an actual engine policy callback throw, 5 MiB stdout exceeding the inspected 4 MiB host capture cap, and an actual helper sleep exceeding the host's 2,000 ms process timeout. Each run produced exactly two model requests and one errored tool result with REDACTON_WITHHELD, excluded the synthetic credential from tool-result content, and executed Bash exactly once according to its nonsecret counter. The timeout child PID was checked and was no longer alive. Total CLI timings include host startup and are not helper latency measurements. Exact counters and timings are in [failure-host-report.json](failure-host-report.json).\n\nA separate malformed-helper response during prompt submission produced zero model requests and zero tool executions. A missing-Node case changed only the test-owned temporary Mod process argv to a nonexistent executable; actual host process startup failed, readiness reported unavailable, and the protected prompt produced zero model requests or tool executions. This is a tested pre-delivery prompt withholding path. The synthetic credential is emitted by a test-owned Node fixture. Tool arguments contain only quoted executable/fixture paths and remain outside coverage; tool-result checks exclude those arguments.\n\nReproduce with \`rtk proxy node qualification/failure-host.mjs\`. Each CLI launch is bounded to 30 seconds. Protocol input-size boundaries and queue saturation also have unit/SDK evidence, while this probe exercises oversized child stdout and actual engine policy failure. The process truncation flag itself was not captured at the SDK process boundary, so the observed withholding does not distinguish host truncation from the parent response-size guard. Cancellation was not injected because the installed SDK test call interface exposes no supported abort control. These results do not establish immunity to arbitrary simultaneous outer/catch-handler failure or a platform matrix.\n`,
     );
   }
 } finally {

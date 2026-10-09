@@ -114,11 +114,18 @@ def preview_pairs(view):
     return [(re.sub(gap,'',a),re.sub(gap,'',b)) for a,b in re.findall(pattern,view)]
 
 def focused(label):
-    for row,line in enumerate(screen.display):
-        if label in line:
-            col=line.index(label)
-            if all(screen.buffer[row][x].reverse for x in range(col,col+len(label))):
-                return True
+    lines = screen.display
+    text = '\n'.join(lines)
+    positions = []
+    for row, line in enumerate(lines):
+        positions.extend((row, column) for column in range(len(line)))
+        if row + 1 < len(lines):
+            positions.append(None)
+    pattern = r'[\s│┃]*'.join(re.escape(char) for char in label if not char.isspace())
+    for match in re.finditer(pattern, text):
+        cells = [positions[index] for index in range(match.start(), match.end()) if not text[index].isspace() and text[index] not in '│┃']
+        if cells and all(screen.buffer[row][column].reverse for row, column in cells):
+            return True
     return False
 
 try:

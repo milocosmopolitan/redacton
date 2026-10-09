@@ -30,6 +30,7 @@ function run(args, env = process.env, inspectReport = false) {
   return result;
 }
 try {
+  run([resolve('qualification/test-terminal-observation.py')]);
   const dependencies = join(temporary, 'dependencies');
   run([
     '-m',
