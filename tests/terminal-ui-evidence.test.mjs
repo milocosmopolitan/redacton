@@ -6,10 +6,43 @@ import {
   terminalUiFrame,
   terminalUiState,
   windowsPtyChild,
+  windowsPtyChildState,
   windowsPtyDiagnostics,
   windowsPtySelftest,
   windowsPtyState,
 } from '../scripts/terminal-ui-evidence.mjs';
+
+test('owned child checkpoints reject paths, argv, arbitrary phases and exception text', () => {
+  const row = {
+    code: 'WINDOWS_PTY_CHILD_STATE',
+    columns: 140,
+    sidechannelValid: true,
+    startupReached: true,
+    exactArgv: true,
+    stdinStream: true,
+    stdoutStream: true,
+    stderrStream: true,
+    stdinTty: false,
+    stdoutTty: false,
+    stderrTty: false,
+    phase: 'STDIO',
+    exceptionPhase: 'STDIO',
+    errno: null,
+  };
+  assert.deepEqual(windowsPtyChildState(row), row);
+  assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(row)), [row]);
+  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(row)), [row]);
+  for (const invalid of [
+    { ...row, argv: ['secret'] },
+    { ...row, phase: 'private path' },
+    { ...row, exceptionPhase: 'raw exception' },
+    { ...row, errno: true },
+    { ...row, errno: -1 },
+    { ...row, stdinStream: 'private' },
+    { ...row, sidechannelValid: 1 },
+  ])
+    assert.equal(windowsPtyChildState(invalid), null);
+});
 
 test('startup child diagnostics forward finite categories and reject text or oversized counters', () => {
   const row = {

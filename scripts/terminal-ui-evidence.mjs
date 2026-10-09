@@ -278,6 +278,45 @@ export function windowsPtySelftest(value) {
     ? value
     : null;
 }
+export function windowsPtyChildState(value) {
+  const flags = [
+    'exactArgv',
+    'stdinStream',
+    'stdoutStream',
+    'stderrStream',
+    'stdinTty',
+    'stdoutTty',
+    'stderrTty',
+  ];
+  const phases = [
+    'UNOBSERVED',
+    'STARTUP',
+    'ARGV',
+    'STDIO',
+    'DIMENSIONS',
+    'INPUT',
+    'COMPLETE',
+  ];
+  return keys(
+    value,
+    'code,columns,errno,exactArgv,exceptionPhase,phase,sidechannelValid,startupReached,stderrStream,stderrTty,stdinStream,stdinTty,stdoutStream,stdoutTty',
+  ) &&
+    value.code === 'WINDOWS_PTY_CHILD_STATE' &&
+    [140, 80].includes(value.columns) &&
+    typeof value.sidechannelValid === 'boolean' &&
+    typeof value.startupReached === 'boolean' &&
+    flags.every(
+      (key) => value[key] === null || typeof value[key] === 'boolean',
+    ) &&
+    phases.includes(value.phase) &&
+    ['NONE', ...phases.slice(1)].includes(value.exceptionPhase) &&
+    (value.errno === null ||
+      (Number.isSafeInteger(value.errno) &&
+        value.errno >= 0 &&
+        value.errno <= 0xffffffff))
+    ? value
+    : null;
+}
 export function terminalUiBootstrap(value) {
   return keys(value, 'code,exception,exitCode,passed,phase,timedOut') &&
     value.code === 'TERMINAL_UI_BOOTSTRAP' &&
@@ -309,7 +348,8 @@ export function windowsPtyDiagnostics(stdout) {
       const value =
         windowsPtyState(parsed) ??
         windowsPtyChild(parsed) ??
-        windowsPtySelftest(parsed);
+        windowsPtySelftest(parsed) ??
+        windowsPtyChildState(parsed);
       if (value) output.push(value);
     } catch {}
     if (output.length === 8) break;
@@ -335,6 +375,8 @@ export function terminalUiDiagnostics(stdout) {
       output.push(windowsPtyChild(value));
     } else if (windowsPtySelftest(value)) {
       output.push(windowsPtySelftest(value));
+    } else if (windowsPtyChildState(value)) {
+      output.push(windowsPtyChildState(value));
     } else if (terminalUiBootstrap(value)) {
       output.push(terminalUiBootstrap(value));
     } else if (terminalUiFrame(value)) {
@@ -363,7 +405,7 @@ export function terminalUiDiagnostics(stdout) {
         ...('state' in value ? { state: terminalUiState(value.state) } : {}),
       });
     }
-    if (output.length === 22) break;
+    if (output.length === 24) break;
   }
   return output;
 }
