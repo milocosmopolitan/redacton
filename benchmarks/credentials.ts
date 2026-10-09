@@ -1,3 +1,5 @@
+import type { CredentialType, Family, Fixture } from './fixtures.ts';
+
 // Freeze labels before execution. All credential-shaped values are generated synthetic fixtures.
 const github = 'ghp_SYNTHETICREVOKED00000000000000000000';
 const aws = 'AKIASYNTHETIC0000000';
@@ -6,8 +8,15 @@ const bearer = 'SyntheticRevokedToken7x9Q2m4N6p8R0s2T';
 const password = 'SyntheticRevokedPass7Q9x2M4n';
 const pem =
   '-----BEGIN PRIVATE KEY-----\nU1lOVEhFVElDX1JFVk9LRURfRklYVFVSRQ==\n-----END PRIVATE KEY-----';
-const rows = [];
-const positive = (id, family, text, expectedText, type, source = 'original') =>
+const rows: Fixture[] = [];
+const positive = (
+  id: string,
+  family: Family,
+  text: string,
+  expectedText: string | null,
+  type: CredentialType,
+  source = 'original',
+): number =>
   rows.push({
     id,
     family,
@@ -18,7 +27,12 @@ const positive = (id, family, text, expectedText, type, source = 'original') =>
     expectedText,
     expectedStatus: type === 'private_key' ? 'blocked' : 'ok',
   });
-const negative = (id, family, text, source = 'original') =>
+const negative = (
+  id: string,
+  family: Family,
+  text: string,
+  source = 'original',
+): number =>
   rows.push({
     id,
     family,

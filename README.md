@@ -1,29 +1,46 @@
 # Redacton
 
-Experimental local credential protection for Claude Code prompt text/context, Read text, and Bash stdout/stderr, using Redact Secret. `/redacton` requests ON; `/redactoff` bypasses scans for future operations in the current session.
+[![MIT License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](ARCHITECTURE.md)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-2.1.294-D97757)](docs/COMPATIBILITY.md)
+[![Powered by Redact Secret](https://img.shields.io/badge/Powered_by-Redact_Secret-6D28D9)](https://github.com/redact-secret/redact-secret)
 
-**Protection is conditional on the functioning host and outer guard. Original prompts/tool arguments can remain in host storage, and encoded credentials can be missed. This is not production-ready.** [Compatibility and exact historical evidence](docs/COMPATIBILITY.md) explain the qualified scope and exclusions.
+Keep recognized credentials out of supported Claude Code model inputs. Redacton scans prompt text/context, Read text, and Bash stdout/stderr, replacing detected credentials with placeholders. Recognized private keys block the entire event.
 
-## Try the published alpha
+Powered by **[Redact Secret](https://github.com/redact-secret/redact-secret)**, a deterministic Rust detection engine with native and WebAssembly runtimes. Scanning runs locally, without sending content to a detection service. Explore [Redact Secret](https://www.redactsecret.com) for local redaction in your own apps, and [star the project](https://github.com/redact-secret/redact-secret) to support it.
 
-Download the artifact and `SHA256SUMS` from [v0.1.0-alpha.1](https://github.com/milocosmopolitan/redacton/releases/tag/v0.1.0-alpha.1), verify the checksum, extract it, and run `claude --plugin-dir <extracted-directory>`. The release was qualified on Claude Code 2.1.294, macOS ARM64, Node 22.16.0. Other platforms/hosts and Desktop are not advertised as supported. Current source changes do not silently replace the published artifact.
+## Install in two minutes
 
-Requested ON is distinct from loading/ready/unavailable. Unsupported selected envelopes, invalid helper replies and scanner/process failures withhold selected content under the qualified guard conditions. Running operations retain their captured policy. Recognized private keys block the entire event; zero findings means no recognized findings, not safe content.
+Have **Claude Code and Node.js 22** installed on **macOS Apple Silicon**. The verified combination is Claude Code **2.1.294** and Node **22.16.0**; other platforms, host versions and Desktop have not been qualified.
 
-OFF displays both immediate feedback and this prompt-area warning:
+```bash
+curl -fsSL https://raw.githubusercontent.com/milocosmopolitan/redacton/main/scripts/install.sh | bash
+claude --plugin-dir "$HOME/.local/share/redacton/current"
+```
 
-> ⚠ Redacton OFF — credential protection disabled
+The installer downloads the published package, verifies its pinned checksum, and installs it without npm or a build step. You can [inspect the installer](scripts/install.sh) or download packages from [Releases](https://github.com/milocosmopolitan/redacton/releases).
 
-Commands take no arguments. New/resumed/branched CLI sessions request ON; there is no saved global OFF preference. MCP, other tools, authentication/tool arguments, binary/audio/images, PII, vault/restore and old history are outside coverage. Blocking returned output does not undo tool effects.
+The `--plugin-dir` option loads Redacton for that Claude Code launch. Use the same launch command for future sessions.
 
-## Develop
+## Use it
 
-See [CONTRIBUTING](CONTRIBUTING.md) for build, type/lint and test commands, and [ARCHITECTURE](ARCHITECTURE.md) for runtime boundaries.
+After launch, run `/redacton` and confirm **Protect ready** before your first task.
 
-- `mod/`: typed host registration, state, protocol and pure adapters.
-- `helper/src/`: typed Node helper; generated distribution output stays separate.
-- `tests/`: unit and host SDK regressions.
-- `qualification/`: reusable actual-host regressions and the independent pilot plan.
-- `benchmarks/`: synthetic corpus and source/license provenance.
+New, resumed and branched CLI sessions start with protection requested **ON**. Readiness is shown separately as loading, ready or unavailable.
 
-Use [private GitHub reporting](https://github.com/milocosmopolitan/redacton/security/advisories/new) for vulnerabilities and the existing maintainer email in [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md) for conduct concerns. Public issues are not confidential. [MIT](LICENSE), [dependency notices](THIRD_PARTY_NOTICES.md), [security policy](SECURITY.md), and [agent rules](AGENT.md) apply.
+| Command | Effect |
+| --- | --- |
+| `/redacton` | Request protection for subsequent supported operations. |
+| `/redactoff` | Bypass scans for subsequent operations in this session. |
+
+Commands take no arguments. Running operations keep the policy they started with. OFF displays a prompt-area warning: **⚠ Redacton OFF — credential protection disabled**.
+
+## Know the boundaries
+
+Protection depends on the functioning host and outer guard. Unsupported selected results and scanner failures withhold content under those guard conditions; a host that bypasses all guards can expose it.
+
+**Original prompts and tool arguments can remain in host storage. Encoded credentials can be missed, and zero findings does not mean safe content.** MCP, other tools, tool arguments, binary/image/audio content, PII and existing history are outside coverage. Withholding output does not undo a tool's effects.
+
+See [compatibility and evidence](docs/COMPATIBILITY.md) and the [threat model](docs/THREAT_MODEL.md) for exact limits. For vulnerabilities, use [private security reporting](https://github.com/milocosmopolitan/redacton/security/advisories/new); public issues are not confidential.
+
+[Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Dependency notices](THIRD_PARTY_NOTICES.md) · [MIT license](LICENSE)

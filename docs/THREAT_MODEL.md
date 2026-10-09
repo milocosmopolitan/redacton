@@ -1,4 +1,4 @@
-# Experimental Alpha 1 threat model
+# Threat model
 
 This describes the intended boundary and current limitations. It does not establish production readiness, host transcript protection, or coverage for every tool. Compatibility evidence and known host bypass behavior take precedence over this design.
 

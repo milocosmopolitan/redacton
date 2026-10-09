@@ -1,8 +1,8 @@
 # Compatibility and evidence
 
-The published [v0.1.0-alpha.1 prerelease](https://github.com/milocosmopolitan/redacton/releases/tag/v0.1.0-alpha.1) preserves the evaluated artifact and complete evidence. Current source can change independently; historical results do not automatically qualify a refactored binary. Reusable host regressions remain in `qualification/` and current validation commands are in [CONTRIBUTING](../CONTRIBUTING.md).
+The [published package](https://github.com/milocosmopolitan/redacton/releases/tag/v0.1.0-alpha.1) preserves the evaluated artifact and complete evidence. Current source can change independently; historical results do not automatically qualify a refactored binary. Reusable host regressions remain in `qualification/` and current validation commands are in [CONTRIBUTING](../CONTRIBUTING.md).
 
-## Published Alpha 1 scope
+## Published package scope
 
 Claude Code/generated SDK 2.1.294, macOS ARM64, Node 22.16.0 host. Node 24.21.0 separately passed 25 helper/protocol/state/adapter tests, not a Node 24 host installation. Linux, Windows, Desktop, other hosts/architectures, interactive watch/reload, arbitrary scrolling, and every terminal size were not qualified.
 
@@ -22,6 +22,6 @@ The print-stream source-edit probe did not reload the Mod: helper count remained
 
 [Integration and storage](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/INTEGRATION_REPORT.md), [packaged-host identity](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/packaged-host-report.md), [faults](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/failure-host-report.md), [sessions/cancellation/permissions](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/SESSION_REPORT.md), [terminal UI](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/ui-report.md), [resource measurements](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/budgets.md), and [quality/provenance](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/quality-report.md) retain exact versions, hashes, counters, reproduction code and exclusions.
 
-The original [single-layer failure](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/host-spike/REPORT.md) and [layered follow-up](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/layered-spike/REPORT.md) remain available at the tag. Current design rationale is in [decision 0002](decisions/0002-layered-trusted-results.md).
+The original [single-layer failure](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/host-spike/REPORT.md) and [layered follow-up](https://github.com/milocosmopolitan/redacton/blob/v0.1.0-alpha.1/qualification/layered-spike/REPORT.md) remain available at the tag. Current design rationale is in [layered-guard decision](decisions/layered-trusted-results.md).
 
 Independent adoption remains unmeasured. [The pilot plan](../qualification/PILOT_PLAN.md) requires three actual independent installations and seven-day follow-up; agents, downloads and CI do not count.

@@ -1,0 +1,68 @@
+import type { Fixture } from './fixtures.ts';
+
+// Additional cases reserved from helper tests and the initial assessment; no detector tuning uses them.
+const rows: Fixture[] = [
+  {
+    id: 'heldout-github-escaping',
+    family: 'github',
+    split: 'heldout',
+    source: 'original',
+    text: '{"message":"\\"ghp_SYNTHETICREVOKED11111111111111111111\\""}',
+    expectedText: '{"message":"\\"<SECRET_1>\\""}',
+    expectedTypes: ['github_token'],
+    expectedStatus: 'ok',
+  },
+  {
+    id: 'heldout-aws-log',
+    family: 'aws',
+    split: 'heldout',
+    source: 'aws-cli-shape',
+    text: '[INFO] credential response: AccessKeyId=ASIASYNTHETIC1111111\n',
+    expectedText: '[INFO] credential response: AccessKeyId=<SECRET_1>\n',
+    expectedTypes: ['aws_access_key_id'],
+    expectedStatus: 'ok',
+  },
+  {
+    id: 'heldout-bearer-stderr',
+    family: 'bearer',
+    split: 'heldout',
+    source: 'rfc6750-shape',
+    text: 'curl debug stderr\n> Authorization: Bearer SyntheticRevokedToken9r7T5y3U1i8O6p4A\n',
+    expectedText: 'curl debug stderr\n> Authorization: Bearer <SECRET_1>\n',
+    expectedTypes: ['bearer_token'],
+    expectedStatus: 'ok',
+  },
+  {
+    id: 'heldout-connection-prompt',
+    family: 'connection',
+    split: 'heldout',
+    source: 'rfc3986-shape',
+    text: 'Explain this connection failure: mysql://sample:SyntheticPass8N6m4L2k@localhost:3306/demo',
+    expectedText:
+      'Explain this connection failure: mysql://sample:<SECRET_1>@localhost:3306/demo',
+    expectedTypes: ['connection_string_password'],
+    expectedStatus: 'ok',
+  },
+  {
+    id: 'heldout-benign-log',
+    family: 'benign',
+    split: 'heldout',
+    source: 'original',
+    text: '[INFO] request_id=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee status=200',
+    expectedText:
+      '[INFO] request_id=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee status=200',
+    expectedTypes: [],
+    expectedStatus: 'ok',
+  },
+  {
+    id: 'heldout-contextual-reference',
+    family: 'contextual',
+    split: 'heldout',
+    source: 'original',
+    text: 'password: process.env.DATABASE_PASSWORD',
+    expectedText: 'password: process.env.DATABASE_PASSWORD',
+    expectedTypes: [],
+    expectedStatus: 'ok',
+  },
+];
+export default Object.freeze(rows.map((row) => Object.freeze(row)));

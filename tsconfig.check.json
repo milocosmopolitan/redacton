@@ -19,6 +19,7 @@
     "mod/**/*.tsx",
     "tests/**/*.ts",
     "tests/**/*.tsx",
-    "qualification/fixtures/**/hooks/*.ts"
+    "qualification/fixtures/**/hooks/*.ts",
+    "benchmarks/**/*.ts"
   ]
 }
