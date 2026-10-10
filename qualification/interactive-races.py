@@ -30,33 +30,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 class Terminal:
     def __init__(self, executable, arguments, folder, env):
-        self.windows = None
         self.exit_code = None
         self.reaped = False
-        if os.name == 'nt':
-            spec = importlib.util.spec_from_file_location('race_windows_pty', os.path.join(HERE, 'windows-pty.py'))
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            self.windows = module.WindowsPty(executable, arguments, folder, env, 140)
-        else:
-            import fcntl
-            import pty
-            import struct
-            import termios
-            self.pid, self.master = pty.fork()
-            if self.pid == 0:
-                try:
-                    os.chdir(folder)
-                    os.execvpe(executable, [executable, *arguments], env)
-                except Exception:
-                    os.write(1, b'RACE_CHILD_EXEC_FAILED\n')
-                    os._exit(1)
-            os.set_blocking(self.master, False)
-            fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 140, 0, 0))
+        import fcntl
+        import pty
+        import struct
+        import termios
+        self.pid, self.master = pty.fork()
+        if self.pid == 0:
+            try:
+                os.chdir(folder)
+                os.execvpe(executable, [executable, *arguments], env)
+            except Exception:
+                os.write(1, b'RACE_CHILD_EXEC_FAILED\n')
+                os._exit(1)
+        os.set_blocking(self.master, False)
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 140, 0, 0))
 
     def read(self):
-        if self.windows:
-            return self.windows.read(.05)
         import select
         if select.select([self.master], [], [], .05)[0]:
             try:
@@ -66,14 +57,9 @@ class Terminal:
         return None
 
     def write(self, value):
-        if self.windows:
-            self.windows.write(value)
-        else:
-            os.write(self.master, value)
+        os.write(self.master, value)
 
     def poll(self):
-        if self.windows:
-            return self.windows.poll()
         if self.exit_code is None:
             status = os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
             if status:
@@ -83,32 +69,29 @@ class Terminal:
     def close(self):
         if self.reaped:
             return
-        if self.windows:
-            self.windows.close()
-        else:
-            # The PTY child owns this process group, including its Bash children.
+        # The PTY child owns this process group, including its Bash children.
+        try:
+            os.killpg(self.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            if self.poll() is None:
+                raise RuntimeError('RACE_PTY_CLEANUP_FAILED')
+        # poll deliberately keeps the direct child unreaped, so its PID and
+        # original process-group ID cannot be reused before this cleanup.
+        if self.poll() is None:
             try:
-                os.killpg(self.pid, signal.SIGKILL)
+                os.kill(self.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            except PermissionError:
-                if self.poll() is None:
-                    raise RuntimeError('RACE_PTY_CLEANUP_FAILED')
-            # poll deliberately keeps the direct child unreaped, so its PID and
-            # original process-group ID cannot be reused before this cleanup.
-            if self.poll() is None:
-                try:
-                    os.kill(self.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            os.close(self.master)
-            deadline = time.monotonic() + 5
-            while self.poll() is None and time.monotonic() < deadline:
-                time.sleep(.01)
-            if self.exit_code is None:
-                raise RuntimeError('RACE_PTY_CLEANUP_FAILED')
-            os.waitpid(self.pid, 0)
-            self.reaped = True
+        os.close(self.master)
+        deadline = time.monotonic() + 5
+        while self.poll() is None and time.monotonic() < deadline:
+            time.sleep(.01)
+        if self.exit_code is None:
+            raise RuntimeError('RACE_PTY_CLEANUP_FAILED')
+        os.waitpid(self.pid, 0)
+        self.reaped = True
 
 
 def run_direction(binary, root, direction):
@@ -236,10 +219,6 @@ def run_direction(binary, root, direction):
                'CLAUDE_CONFIG_DIR': config, 'REDACTON_SETTINGS_ROOT': os.path.join(folder, 'settings'),
                'ANTHROPIC_API_KEY': 'synthetic-local-only', 'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{server.server_port}',
                'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
-        if os.name == 'nt':
-            for name in ['SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT']:
-                if name in os.environ:
-                    env[name] = os.environ[name]
         terminal = Terminal(binary, ['--plugin-dir', root, '--plugin-dir', companion, '--setting-sources', '',
                                      '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--permission-mode', 'dontAsk',
                                      '--allowedTools', 'Bash', '--model', 'claude-sonnet-4-6'], folder, env)
@@ -369,8 +348,6 @@ def run_direction(binary, root, direction):
                                       'slashDraftVisible': ('/redactoff' if direction == 'on-to-off' else '/redacton') in view},
                 'toolDiagnostics': [value for value in ['permission', 'denied', 'not allowed', 'not found', 'No such', 'outside', 'not authorized', 'policy', 'REDACTON_', 'Exit code', 'SyntaxError'] if value.lower() in first.lower()],
                 'startupDiagnostics': [value for value in ['RACE_CHILD_EXEC_FAILED', 'unknown option', 'only works', 'only supported', 'permission-mode', 'setting-sources', 'plugin-dir', 'no-session-persistence', 'ENOENT', 'EACCES', 'error:', 'requires', 'must be', 'Cannot', 'non-interactive', 'Bun', 'panic', 'assert', 'Segmentation', 'Illegal', 'dyld', 'Permission', 'spawn', 'EPERM', 'Using', 'auth', 'API', 'Welcome', 'trust', 'Error', 'TypeError', 'ReferenceError'] if value in receipt_buffer] if phase == 'startup' else []}
-        if phase == 'startup' and terminal.windows:
-            terminal.windows.startup_diagnostic(receipt_buffer)
         outcome['startupState'] = {'trustAnswered': trust_answered, 'keyAnswered': key_answered,
                                    'trustQuestion': any(value in view for value in ['Do you trust the files in this folder?', 'Is this a project you created or one you trust?']),
                                    'keyQuestion': 'Do you want to use this API key?' in view,

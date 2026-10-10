@@ -11,12 +11,11 @@ import subprocess
 import re
 import threading
 import codecs
-if os.name != 'nt':
-    import fcntl
-    import pty
-    import termios
-    import struct
-    import select
+import fcntl
+import pty
+import termios
+import struct
+import select
 from http.server import BaseHTTPRequestHandler, HTTPServer
 if os.environ.get("REDACTON_PYTE_PATH"):
     sys.path.insert(0, os.environ["REDACTON_PYTE_PATH"])
@@ -84,35 +83,22 @@ except BaseException:
     raise
 
 columns=int(os.environ.get('REDACTON_UI_COLUMNS','140'))
-windows_pty = None
 try:
-    if os.name == 'nt':
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('redacton_windows_pty', os.path.join(os.path.dirname(__file__), 'windows-pty.py'))
-        backend = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(backend)
-        windows_pty = backend.WindowsPty(os.path.abspath(shutil.which(host_binary) or host_binary), arguments, folder, env, columns)
-    else:
-        pid, master = pty.fork()
-        if pid == 0:
-            os.chdir(folder)
-            os.execvpe(host_binary, [host_binary, *arguments], env)
-        os.set_blocking(master, False)
-        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, columns, 0, 0))
+    pid, master = pty.fork()
+    if pid == 0:
+        os.chdir(folder)
+        os.execvpe(host_binary, [host_binary, *arguments], env)
+    os.set_blocking(master, False)
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, columns, 0, 0))
 except BaseException:
     shutil.rmtree(folder, ignore_errors=True)
     server.shutdown();server.server_close()
     raise
 
 def write_terminal(data):
-    if windows_pty:
-        windows_pty.write(data)
-    else:
-        os.write(master, data)
+    os.write(master, data)
 
 def read_terminal():
-    if windows_pty:
-        return windows_pty.read(.1)
     if select.select([master], [], [], .1)[0]:
         try:
             return os.read(master, 65536)
@@ -148,8 +134,6 @@ observations = {'renderer': 'normal-terminal', 'terminalRows': 40, 'terminalColu
 
 def poll():
     global exit_code
-    if windows_pty:
-        return windows_pty.poll()
     if exit_code is None:
         child, status = os.waitpid(pid, os.WNOHANG)
         if child:
@@ -466,8 +450,6 @@ try:
     observations['offReceiptState'] = {'rejected': visible_words('TURN_ON_TO_VALIDATE', view), 'draftReady': visible_words('Draft ready', view), 'editingDraft': '· editing · base' in view}
     observations['offActionCounts'] = off_action_counts
     observations['childExitCode'] = poll()
-    if windows_pty and stage == 'startup':
-        windows_pty.startup_diagnostic(raw)
     observations['startupCategories'] = [word for word in ['trust', 'API key', 'Welcome', 'login', 'error', 'Enter'] if word.lower() in displayed().lower()]
     observations['modelRequests']=model_requests
     observations['customWithheldCodes']=[code for code in ['REDACTON_UNAVAILABLE','REDACTON_UNSUPPORTED_SHAPE','REDACTON_WITHHELD','REDACTON_TOOL_DENIED','REDACTON_INPUT_LIMIT','OTHER'] if 'UI_CUSTOM_WITHHELD_'+code in raw]
@@ -495,15 +477,12 @@ try:
         sys.exit(1)
 finally:
     try:
-        if windows_pty:
-            windows_pty.close()
-        else:
-            if poll() is None:
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            os.close(master)
+        if poll() is None:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        os.close(master)
     finally:
         shutil.rmtree(folder)
         server.shutdown();server.server_close()
