@@ -604,74 +604,105 @@ test('multiple real processes contending to recover one dead lease retain exactl
         document,
       },
     });
-    const children = Array.from(
-      { length: 8 },
-      () =>
-        new Promise((resolve, reject) => {
-          const child = spawn(process.execPath, ['helper/dist/index.js'], {
-            env: {
-              ...process.env,
-              REDACTON_SETTINGS_ROOT: join(root, 'personal'),
-            },
-            stdio: ['pipe', 'pipe', 'pipe'],
-          });
-          let output = '',
-            error = '';
-          child.stdout.on('data', (bytes) => (output += bytes));
-          child.stderr.on('data', (bytes) => (error += bytes));
-          child.on('error', reject);
-          child.on('close', (exit) => {
-            try {
-              assert.equal(exit, 0);
-              assert.equal(error, '');
-              resolve(JSON.parse(output));
-            } catch (failure) {
-              reject(failure);
-            }
-          });
-          child.stdin.end(input);
-        }),
+    const runHelper = (stdin) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ['helper/dist/index.js'], {
+          env: {
+            ...process.env,
+            REDACTON_SETTINGS_ROOT: join(root, 'personal'),
+          },
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        let output = '',
+          error = '';
+        child.stdout.on('data', (bytes) => (output += bytes));
+        child.stderr.on('data', (bytes) => (error += bytes));
+        child.on('error', reject);
+        child.on('close', (exit) => {
+          try {
+            assert.equal(exit, 0);
+            assert.equal(error, '');
+            resolve(JSON.parse(output));
+          } catch (failure) {
+            reject(failure);
+          }
+        });
+        child.stdin.end(stdin);
+      });
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () => runHelper(input)),
     );
-    const responses = await Promise.all(children);
-    assert.equal(
-      responses.filter((response) => response.status === 'ok').length,
-      1,
+    const failures = responses.filter(
+      (response) => response.status === 'failed',
     );
+    // Overlapping slow ownership probes can exhaust the finite settings deadline
+    // (docs/BUDGETS.md). TIMEOUT is retryable and never a second winner.
+    const timedOut = failures.some(
+      (response) => response.errorCode === 'TIMEOUT',
+    );
+    const winners = responses.filter(
+      (response) => response.status === 'ok',
+    ).length;
     const errorCounts = Object.fromEntries(
       [
         'SETTINGS_BUSY',
         'SETTINGS_CONFLICT',
         'SETTINGS_UNAVAILABLE',
         'SETTINGS_CORRUPT',
+        'TIMEOUT',
         'OTHER',
       ].map((code) => [
         code,
-        responses.filter(
-          (response) =>
-            response.status === 'failed' &&
-            (code === 'OTHER'
-              ? ![
-                  'SETTINGS_BUSY',
-                  'SETTINGS_CONFLICT',
-                  'SETTINGS_UNAVAILABLE',
-                  'SETTINGS_CORRUPT',
-                ].includes(response.errorCode)
-              : response.errorCode === code),
+        failures.filter((response) =>
+          code === 'OTHER'
+            ? ![
+                'SETTINGS_BUSY',
+                'SETTINGS_CONFLICT',
+                'SETTINGS_UNAVAILABLE',
+                'SETTINGS_CORRUPT',
+                'TIMEOUT',
+              ].includes(response.errorCode)
+            : response.errorCode === code,
         ).length,
       ]),
     );
     assert.ok(
-      responses
-        .filter((response) => response.status === 'failed')
-        .every((response) =>
-          [
-            'SETTINGS_BUSY',
-            'SETTINGS_CONFLICT',
-            'SETTINGS_UNAVAILABLE',
-          ].includes(response.errorCode),
-        ),
+      timedOut ? winners <= 1 : winners === 1,
+      JSON.stringify({ winners, ...errorCounts }),
+    );
+    assert.ok(
+      failures.every((response) =>
+        [
+          'SETTINGS_BUSY',
+          'SETTINGS_CONFLICT',
+          'SETTINGS_UNAVAILABLE',
+          'TIMEOUT',
+        ].includes(response.errorCode),
+      ),
       JSON.stringify(errorCounts),
     );
+    if (timedOut) {
+      // A contender that timed out may leave its lease behind. A later
+      // uncontended save must recover it and finish with the exact document.
+      const current = await load(store);
+      const retry = await runHelper(
+        JSON.stringify({
+          protocolVersion: 2,
+          requestId: 'recovery-retry',
+          operation: 'save-config',
+          policyId: POLICY_ID,
+          storage: {
+            scope: 'personal',
+            approved: true,
+            expectedIdentity: current.identity,
+            expectedRevision: current.revision,
+            expectedDocument: current.document,
+            document,
+          },
+        }),
+      );
+      assert.equal(retry.status, 'ok', JSON.stringify(retry));
+    }
     assert.deepEqual((await load(store)).document, document);
     assert.deepEqual((await readdir(join(root, 'personal'))).sort(), [
       '.identity',

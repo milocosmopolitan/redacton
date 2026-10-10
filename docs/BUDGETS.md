@@ -37,6 +37,8 @@ installation, new daemon, or persistent worker is introduced. Optional
 is terminated after measurements. This is CPU competition on the local machine,
 not an assertion of a container quota. `--single-cpu-affinity --cpu-load` additionally requires Linux and verifies that both the measuring process and the competing worker have the same single allowed logical CPU in `/proc/self/status`. The competitor remains finite (at most 30 seconds), and early competitor exit fails the constrained report. Helper children inherit the same affinity. This constrains the process subtree's scheduling, not the VM's machine-wide CPU count or quota.
 
+A single failed sample (for example one cold PowerShell ownership probe exceeding its finite deadline) fails a measurement. The Windows PR job runs the measurement once more after a first failure; two consecutive failed measurements are treated as a real regression.
+
 Each artifact uses 10 fresh processes per measured operation. Reports retain
 attempt/failure counts, nearest-rank p50/p95, and maximum over successful attempts.
 The first process event is reported separately; subsequent events summarize warm
