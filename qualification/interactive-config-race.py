@@ -177,8 +177,6 @@ def probe(binary, root):
                 if match and match.group(1) == observations[0]: observations.append(match.group(2)); stage = 'complete'; break
             if stage != old_stage: changed_at = time.monotonic()
             if stage in ['panel', 'prefix', 'length', 'build', 'validate', 'preview', 'apply', 'applied', 'close', 'first-report', 'second-report'] and time.monotonic() - changed_at > 6: break
-        if stage == 'startup' and terminal.windows:
-            terminal.windows.startup_diagnostic(history)
         results = {}
         for request in captures:
             for message in request.get('messages', []):
