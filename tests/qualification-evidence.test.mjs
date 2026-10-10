@@ -107,8 +107,6 @@ test('release gate requires all 14 exact-commit rows and the actual qualified ar
       ['linux', 'x64'],
       ['linux', 'arm64'],
       ['win32', 'x64'],
-      ['wsl', 'x64'],
-      ['wsl', 'arm64'],
     ]) {
       for (const node of ['v22.16.0', 'v24.21.0']) {
         const path = join(dir, 'evidence', `${platform}-${arch}-${node}.json`);
@@ -118,7 +116,7 @@ test('release gate requires all 14 exact-commit rows and the actual qualified ar
           JSON.stringify({
             ...evidence(),
             platform,
-            environment: platform === 'wsl' ? 'wsl2' : 'native',
+            environment: 'native',
             arch,
             node,
             sourceSha,

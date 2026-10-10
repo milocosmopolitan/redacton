@@ -18,7 +18,6 @@ export function validateManualProvenance(
     'node24Run',
     'attestationSha256',
     'overrides',
-    'externalRows',
   ];
   if (
     value?.schemaVersion !== 1 ||
@@ -32,15 +31,13 @@ export function validateManualProvenance(
     value.node24Run !== node24Run ||
     !/^[a-f0-9]{64}$/.test(value.attestationSha256) ||
     !Array.isArray(value.overrides) ||
-    value.overrides.length > 14 ||
-    !Array.isArray(value.externalRows) ||
-    value.externalRows.length > 4
+    value.overrides.length > 14
   )
     throw new Error('MANUAL_PROVENANCE_INVALID');
-  for (const row of [...value.overrides, ...value.externalRows]) {
+  for (const row of value.overrides) {
     if (
       !row ||
-      !['darwin', 'linux', 'win32', 'wsl'].includes(row.platform) ||
+      !['darwin', 'linux', 'win32'].includes(row.platform) ||
       !['x64', 'arm64'].includes(row.arch) ||
       !['v22.16.0', 'v24.21.0'].includes(row.node) ||
       Object.keys(row).some(
@@ -55,9 +52,6 @@ export function validateManualProvenance(
       row.gates.length === 0 ||
       row.gates.some((gate) => !manualGates.includes(gate))
     )
-      throw new Error('MANUAL_PROVENANCE_INVALID');
-  for (const row of value.externalRows)
-    if (row.platform !== 'wsl' || row.gates !== undefined)
       throw new Error('MANUAL_PROVENANCE_INVALID');
   return true;
 }

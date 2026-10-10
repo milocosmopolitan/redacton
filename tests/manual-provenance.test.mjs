@@ -23,7 +23,6 @@ const value = () => ({
       gates: ['terminal-ui'],
     },
   ],
-  externalRows: [],
 });
 test('manual evidence provenance binds review actor, run attempt, base runs and artifact', () => {
   assert.equal(

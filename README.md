@@ -15,7 +15,7 @@ Powered by **[Redact Secret](https://github.com/redact-secret/redact-secret)**, 
 
 This command installs the existing verified **macOS Apple Silicon release**, not a universal cross-platform package.
 
-Have **Claude Code and Node.js 22** installed on **macOS Apple Silicon**. The verified combination is Claude Code **2.1.294** and Node **22.16.0**; other platforms, host versions and Desktop have not been qualified. Required follow-on support targets macOS x64, Linux x64/ARM64 and Windows x64/WSL; those targets are not supported by this installer.
+Have **Claude Code and Node.js 22** installed on **macOS Apple Silicon**. The verified combination is Claude Code **2.1.294** and Node **22.16.0**; other platforms, host versions and Desktop have not been qualified. Required follow-on support targets macOS x64, Linux x64/ARM64 and Windows x64; WSL has no qualification path. Those targets are not supported by this installer.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/milocosmopolitan/redacton/main/scripts/install.sh | bash

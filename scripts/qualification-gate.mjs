@@ -36,9 +36,7 @@ if (matrix.schemaVersion !== 1 || !Array.isArray(matrix.environments))
 for (const environment of matrix.environments.filter(
   (row) => row.scope === 'target',
 )) {
-  const platform = environment.id.startsWith('wsl2-')
-    ? 'wsl'
-    : environment.platform;
+  const platform = environment.platform;
   for (const node of environment.nodeMajors)
     if (!rows.has(`${platform}-${environment.arch}-${node}`))
       throw new Error('QUALIFICATION_ROW_MISSING');

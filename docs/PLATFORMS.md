@@ -21,7 +21,7 @@ Every target row requires both Node floors above, package/install checks and act
 | Linux glibc x64 | `node-linux-x64-gnu` | Unix candidate | Target, unqualified until installer and actual host pass. |
 | Linux glibc ARM64, native | `node-linux-arm64-gnu` | Unix candidate | Target, unqualified until native runner and actual host pass. |
 | Windows x64, native | `node-win32-x64-msvc` | PowerShell candidate | Target, unqualified. Bash interception additionally needs the host's Bash tool. PowerShell tool output is outside current coverage. |
-| WSL2 Linux x64/ARM64 | Matching Linux GNU addon | Unix candidate inside WSL | Separate target, blocked on an actual WSL2 environment. Ubuntu CI alone is not WSL evidence. |
+| WSL2 Linux x64/ARM64 | Matching Linux GNU addon | Unix candidate inside WSL | Not a qualification target: no WSL host evidence is collected. Ubuntu CI alone is not WSL evidence. |
 
 All addon names have the `@redact-secret/` prefix and version `0.1.0-beta.14`. All rows can use the portable WASM candidate. No architecture emulation counts as native evidence.
 
