@@ -1,11 +1,6 @@
 import { validateEvidence } from './qualification-evidence.mjs';
 
-export const manualGates = [
-  'terminal-ui',
-  'config-races',
-  'toggle-races',
-  'cancellation',
-];
+export const manualGates = ['terminal-ui', 'config-races', 'toggle-races'];
 export function mergeManualEvidence(
   base,
   attestation,
@@ -59,8 +54,7 @@ export function mergeManualEvidence(
       if (
         !manualGates.includes(gate) ||
         status !== 'passed' ||
-        record.gates[gate] !== 'blocked' ||
-        (gate === 'cancellation' && record.platform !== 'win32')
+        record.gates[gate] !== 'blocked'
       )
         throw new Error('MANUAL_GATE_INVALID');
       record.gates[gate] = 'passed';

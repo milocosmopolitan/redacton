@@ -5,72 +5,9 @@ import {
   terminalUiDiagnostics,
   terminalUiFrame,
   terminalUiState,
-  windowsPtyChild,
-  windowsPtyChildState,
-  windowsPtyDiagnostics,
-  windowsPtySelftest,
-  windowsPtyState,
 } from '../scripts/terminal-ui-evidence.mjs';
 
-test('owned child checkpoints reject paths, argv, arbitrary phases and exception text', () => {
-  const row = {
-    code: 'WINDOWS_PTY_CHILD_STATE',
-    columns: 140,
-    sidechannelValid: true,
-    startupReached: true,
-    exactArgv: true,
-    stdinStream: true,
-    stdoutStream: true,
-    stderrStream: true,
-    stdinTty: false,
-    stdoutTty: false,
-    stderrTty: false,
-    phase: 'STDIO',
-    exceptionPhase: 'STDIO',
-    errno: null,
-  };
-  assert.deepEqual(windowsPtyChildState(row), row);
-  assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(row)), [row]);
-  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(row)), [row]);
-  for (const invalid of [
-    { ...row, argv: ['secret'] },
-    { ...row, phase: 'private path' },
-    { ...row, exceptionPhase: 'raw exception' },
-    { ...row, errno: true },
-    { ...row, errno: -1 },
-    { ...row, stdinStream: 'private' },
-    { ...row, sidechannelValid: 1 },
-  ])
-    assert.equal(windowsPtyChildState(invalid), null);
-});
-
-test('startup child diagnostics forward finite categories and reject text or oversized counters', () => {
-  const row = {
-    code: 'WINDOWS_PTY_CHILD',
-    exitCode: 1,
-    bytes: 49,
-    visibleCharacters: 0,
-    controlSequences: 5,
-    category: 'CONTROL_ONLY',
-    tokens: [],
-  };
-  assert.deepEqual(windowsPtyChild(row), row);
-  assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(row)), [row]);
-  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(row)), [row]);
-  for (const invalid of [
-    { ...row, category: 'private payload' },
-    { ...row, tokens: ['/private/path'] },
-    { ...row, tokens: ['bash.exe', 'bash.exe'] },
-    { ...row, bytes: 65537 },
-    { ...row, exitCode: 0x100000000 },
-    { ...row, raw: 'secret' },
-  ]) {
-    assert.equal(windowsPtyChild(invalid), null);
-    assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(invalid)), []);
-  }
-});
-
-test('bootstrap phases and actual ConPTY selftests keep only fixed exception and boolean evidence', () => {
+test('bootstrap phases keep only fixed exception and boolean evidence', () => {
   const row = {
     code: 'TERMINAL_UI_BOOTSTRAP',
     phase: 'observer',
@@ -89,31 +26,6 @@ test('bootstrap phases and actual ConPTY selftests keep only fixed exception and
     { ...row, stderr: 'secret' },
   ])
     assert.equal(terminalUiBootstrap(invalid), null);
-  const selftest = {
-    code: 'WINDOWS_PTY_SELFTEST',
-    columns: 140,
-    argvCorrect: true,
-    stdinTty: true,
-    stdoutTty: true,
-    stderrTty: true,
-    stderrCaptured: true,
-    dimensionsCorrect: true,
-    inputEcho: true,
-  };
-  assert.deepEqual(windowsPtySelftest(selftest), selftest);
-  assert.deepEqual(windowsPtyDiagnostics(JSON.stringify(selftest)), [selftest]);
-  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(selftest)), [selftest]);
-  assert.equal(
-    windowsPtySelftest({ ...selftest, stdoutTty: 'private text' }),
-    null,
-  );
-  assert.equal(windowsPtySelftest({ ...selftest, columns: 123 }), null);
-  assert.equal(windowsPtySelftest({ ...selftest, pid: 123 }), null);
-  assert.equal(windowsPtySelftest({ ...selftest, stderrTty: 'raw' }), null);
-  assert.equal(
-    windowsPtySelftest({ ...selftest, stderrCaptured: 'payload' }),
-    null,
-  );
 });
 
 test('terminal UI diagnostics forward only bounded whitelisted fields', () => {
@@ -263,36 +175,4 @@ test('complete UI frames retain geometry without allowing arbitrary screen conte
     frames,
   );
   assert.ok(Buffer.byteLength(JSON.stringify(value)) < 4096);
-});
-
-test('Windows PTY diagnostics retain only fixed phases and unsigned API numbers', () => {
-  const state = {
-    code: 'WINDOWS_PTY_STATE',
-    phase: 'CREATE_CONSOLE',
-    win32: 5,
-    hresult: 0x80070005,
-  };
-  assert.deepEqual(windowsPtyState(state), state);
-  assert.deepEqual(terminalUiDiagnostics(JSON.stringify(state)), [state]);
-  for (const patch of [
-    { phase: 'private' },
-    { win32: -1 },
-    { hresult: 0x100000000 },
-    { error: 'private' },
-    { win32: 'private' },
-  ]) {
-    assert.equal(windowsPtyState({ ...state, ...patch }), null);
-    assert.deepEqual(
-      windowsPtyDiagnostics(JSON.stringify({ ...state, ...patch })),
-      [],
-    );
-  }
-  const value = frame();
-  value.state.alive = false;
-  value.state.exitCode = 0xc0000005;
-  assert.deepEqual(terminalUiFrame(value), value);
-  for (const code of [-2, 0x100000000, 1.5]) {
-    value.state.exitCode = code;
-    assert.equal(terminalUiFrame(value), null);
-  }
 });

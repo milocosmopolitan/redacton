@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { withPythonDependencies } from './python-probe.mjs';
-import { windowsPtyDiagnostics } from './terminal-ui-evidence.mjs';
 
 const integer = (value, min, max) =>
   Number.isSafeInteger(value) && value >= min && value <= max;
@@ -127,8 +126,6 @@ async function main() {
         },
       },
     );
-    for (const diagnostic of windowsPtyDiagnostics(execution.stdout ?? ''))
-      console.log(JSON.stringify(diagnostic));
     if (execution.error)
       throw new Error(
         execution.error.code === 'ETIMEDOUT'

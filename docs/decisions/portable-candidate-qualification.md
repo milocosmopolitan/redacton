@@ -5,7 +5,7 @@ status: accepted
 
 # Ship one portable candidate and qualify each host separately
 
-Redacton targets macOS, Linux and native Windows with one Mod, helper and configuration implementation. WSL2 uses the Linux installer but has no qualification path. Desktop is a separate host surface. The immutable macOS ARM64 v0.1.0 artifact remains the verified release; candidate source version 0.1.1 does not change that claim.
+Redacton targets macOS and Linux with one Mod, helper and configuration implementation. Native Windows has a PowerShell installer candidate and WSL2 uses the Linux installer; neither has a qualification path. Desktop is a separate host surface. The immutable macOS ARM64 v0.1.0 artifact remains the verified release; candidate source version 0.1.1 does not change that claim.
 
 Portable candidates bundle the pinned core and ordinary WASM dependency, omitting optional native packages so the public engine import uses its normal automatic fallback. The exact npm lock, prebuilt helper, dependency notices, full file digests, archive digests and source/builder provenance travel with the candidate. Node archive tooling avoids a build-host Python or RTK dependency. Installed dependency bytes are trusted through a clean integrity-checked `npm ci --ignore-scripts`; the builder does not independently authenticate modified node_modules.
 

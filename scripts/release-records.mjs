@@ -41,8 +41,8 @@ export function validateReleaseManifest(value, run, sha, version) {
     value.runAttempt !== run.run_attempt ||
     value.actor !== run.actor.login ||
     !Array.isArray(value.files) ||
-    value.files.length < 13 ||
-    value.files.length > 14
+    value.files.length < 11 ||
+    value.files.length > 12
   )
     throw new Error('RELEASE_RECORD_INVALID');
   const required = new Set([
@@ -53,7 +53,6 @@ export function validateReleaseManifest(value, run, sha, version) {
   for (const [platform, arches] of [
     ['darwin', ['x64', 'arm64']],
     ['linux', ['x64', 'arm64']],
-    ['win32', ['x64']],
   ])
     for (const arch of arches)
       for (const node of [22, 24])

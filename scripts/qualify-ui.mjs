@@ -6,10 +6,9 @@ import {
   terminalUiChecks,
   terminalUiFrame,
   terminalUiState,
-  windowsPtyDiagnostics,
 } from './terminal-ui-evidence.mjs';
 
-if (!['darwin', 'linux', 'win32'].includes(process.platform))
+if (!['darwin', 'linux'].includes(process.platform))
   throw new Error('TERMINAL_UI_PLATFORM_UNAVAILABLE');
 const pluginRoot = process.env.REDACTON_PLUGIN_ROOT;
 if (!pluginRoot) throw new Error('PACKAGED_PLUGIN_REQUIRED');
@@ -22,8 +21,6 @@ try {
         maxBuffer: 1024 * 1024,
         env,
       });
-      for (const value of windowsPtyDiagnostics(result.stdout ?? ''))
-        console.log(JSON.stringify(value));
       if (!inspectReport && (result.status !== 0 || result.error)) {
         const unavailable =
           result.error?.code === 'ENOENT' ||
@@ -39,7 +36,6 @@ try {
     let bootstrapFailed = false;
     for (const [phase, file] of [
       ['observer', 'test-terminal-observation.py'],
-      ['conpty', 'test-windows-pty.py'],
     ]) {
       const execution = run(
         [resolve(`qualification/${file}`)],

@@ -54,7 +54,7 @@ test('qualification rejects stale, emulated, unpinned, or arbitrary-content evid
   delete missing.gates.bash;
   assert.throws(() => validateEvidence(missing, sha), /EVIDENCE_INVALID/);
 });
-test('release gate requires all 14 exact-commit rows and the actual qualified archive', async () => {
+test('release gate requires all 8 exact-commit rows and the actual qualified archive', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'redacton-gate-'));
   const run = (...args) =>
     spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
@@ -106,7 +106,6 @@ test('release gate requires all 14 exact-commit rows and the actual qualified ar
       ['darwin', 'x64'],
       ['linux', 'x64'],
       ['linux', 'arm64'],
-      ['win32', 'x64'],
     ]) {
       for (const node of ['v22.16.0', 'v24.21.0']) {
         const path = join(dir, 'evidence', `${platform}-${arch}-${node}.json`);

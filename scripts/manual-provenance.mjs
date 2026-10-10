@@ -37,7 +37,7 @@ export function validateManualProvenance(
   for (const row of value.overrides) {
     if (
       !row ||
-      !['darwin', 'linux', 'win32'].includes(row.platform) ||
+      !['darwin', 'linux'].includes(row.platform) ||
       !['x64', 'arm64'].includes(row.arch) ||
       !['v22.16.0', 'v24.21.0'].includes(row.node) ||
       Object.keys(row).some(

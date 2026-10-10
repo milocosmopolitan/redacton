@@ -29,7 +29,6 @@ function manifest() {
   for (const [platform, arches] of [
     ['darwin', ['x64', 'arm64']],
     ['linux', ['x64', 'arm64']],
-    ['win32', ['x64']],
   ])
     for (const arch of arches)
       for (const node of [22, 24])
