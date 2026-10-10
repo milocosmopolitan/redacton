@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Removed native Windows from host qualification: the Windows ConPTY harness, its diagnostics and tests, the Windows-only cancellation driver, and the `win32-x64` release-gate row. The PowerShell installer and Windows package CI remain as an unqualified candidate. Release gates now require 8 actual-host rows.
 - Removed the WSL2 qualification harness, release-gate rows and external-row attestations; WSL is documented as having no qualification path. Qualification hosts reject WSL instead of recording it as Linux.
 - Added coalesced same-session settings/scanner recovery through `/redacton`, preserving approved configuration and rejecting stale readiness writes.
 - Kept selected event limits, policy blocking, cancellation and queue refusal local to the event; systemic helper/engine/protocol failures require a successful bounded self-check.

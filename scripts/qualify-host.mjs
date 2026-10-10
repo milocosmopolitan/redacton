@@ -10,10 +10,7 @@ import { faultDiagnostics } from './fault-evidence.mjs';
 import { preparePythonDependencies } from './python-probe.mjs';
 import { requiredGates } from './qualification-evidence.mjs';
 import { raceDiagnostics } from './race-evidence.mjs';
-import {
-  terminalUiDiagnostics,
-  windowsPtyDiagnostics,
-} from './terminal-ui-evidence.mjs';
+import { terminalUiDiagnostics } from './terminal-ui-evidence.mjs';
 
 const sha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
 if (sha.status !== 0 || !/^[a-f0-9]{40}\s*$/.test(sha.stdout))
@@ -55,9 +52,12 @@ let pythonDependencies;
 let pythonBootstrapFailure;
 function run(gate, script, ...args) {
   if (onlyProbe !== 'all' && gate !== onlyProbe && gate !== 'package') return;
-  const needsPython =
-    ['terminal-ui', 'toggle-races', 'config-races', 'off'].includes(gate) ||
-    (gate === 'cancellation' && process.platform === 'win32');
+  const needsPython = [
+    'terminal-ui',
+    'toggle-races',
+    'config-races',
+    'off',
+  ].includes(gate);
   if (needsPython && pythonBootstrapFailure) {
     gates[gate] = pythonBootstrapFailure.status;
     gateCodes[gate] = pythonBootstrapFailure.code;
@@ -86,13 +86,9 @@ function run(gate, script, ...args) {
       gate === 'config-races' ? configRaceDiagnostics : raceDiagnostics;
     for (const value of diagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(value));
-    for (const value of windowsPtyDiagnostics(result.stdout ?? ''))
-      console.log(JSON.stringify(value));
   }
   if (gate === 'cancellation') {
     for (const value of cancellationDiagnostics(result.stdout ?? ''))
-      console.log(JSON.stringify(value));
-    for (const value of windowsPtyDiagnostics(result.stdout ?? ''))
       console.log(JSON.stringify(value));
   }
   if (gate === 'guarded-errors' && script === 'qualification/failure-host.mjs')
@@ -190,12 +186,7 @@ try {
     if (gates['guarded-errors'] === 'passed')
       run('guarded-errors', 'qualification/failure-host.mjs');
     run('sessions', 'qualification/session-host.mjs');
-    run(
-      'cancellation',
-      process.platform === 'win32'
-        ? 'scripts/qualify-cancellation.mjs'
-        : 'qualification/cancellation-host.mjs',
-    );
+    run('cancellation', 'qualification/cancellation-host.mjs');
     run('toggle-races', 'scripts/qualify-races.mjs');
     run('config-races', 'scripts/qualify-config-race.mjs');
     run('terminal-ui', 'scripts/qualify-ui.mjs');

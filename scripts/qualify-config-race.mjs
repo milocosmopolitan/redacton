@@ -7,7 +7,6 @@ import {
   validateConfigRaceReport,
 } from './config-race-evidence.mjs';
 import { withPythonDependencies } from './python-probe.mjs';
-import { windowsPtyDiagnostics } from './terminal-ui-evidence.mjs';
 
 try {
   const root = process.env.REDACTON_PLUGIN_ROOT;
@@ -39,8 +38,6 @@ try {
         },
       },
     );
-    for (const diagnostic of windowsPtyDiagnostics(result.stdout ?? ''))
-      console.log(JSON.stringify(diagnostic));
     for (const diagnostic of configRaceDiagnostics(result.stdout ?? ''))
       if (diagnostic.code === 'CONFIG_HELPER_DIAGNOSTICS')
         console.log(JSON.stringify(diagnostic));

@@ -74,13 +74,13 @@
       "arch": "x64",
       "libc": null,
       "addon": "node-win32-x64-msvc",
-      "scope": "target",
+      "scope": "follow-up",
       "nodeMajors": [
         22,
         24
       ],
       "qualification": "unqualified",
-      "blocker": "native-environment-and-exact-artifact-host-evidence-required"
+      "blocker": "no-qualification-path-native-windows-installer-candidate-only"
     },
     {
       "id": "wsl2-x64",

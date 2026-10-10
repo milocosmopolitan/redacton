@@ -5,7 +5,7 @@ on:
       target:
         description: Native row to rerun, or all
         type: choice
-        options: [all, linux-x64, linux-arm64, darwin-arm64, darwin-x64, win32-x64]
+        options: [all, linux-x64, linux-arm64, darwin-arm64, darwin-x64]
         default: linux-x64
       node:
         description: Exact Node compatibility row
@@ -45,7 +45,6 @@ jobs:
             { target: 'linux-arm64', os: 'ubuntu-24.04-arm', arch: 'arm64' },
             { target: 'darwin-arm64', os: 'macos-15', arch: 'arm64' },
             { target: 'darwin-x64', os: 'macos-15-intel', arch: 'x64' },
-            { target: 'win32-x64', os: 'windows-2025', arch: 'x64' },
           ].filter(row => process.env.TARGET === 'all' || row.target === process.env.TARGET);
           if (!rows.length) throw new Error('TARGET_UNAVAILABLE');
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include: rows })}\n`);
@@ -125,7 +124,7 @@ jobs:
           node scripts/install-ci-host.mjs "$RUNNER_TEMP/redacton-host"
           echo "$RUNNER_TEMP/redacton-host" >> "$GITHUB_PATH"
           echo "CLAUDE_CONFIG_DIR=$RUNNER_TEMP/redacton-host-config" >> "$GITHUB_ENV"
-          if [ "$RUNNER_OS" = Windows ]; then echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude.exe" >> "$GITHUB_ENV"; else echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude" >> "$GITHUB_ENV"; fi
+          echo "CLAUDE_BINARY=$RUNNER_TEMP/redacton-host/claude" >> "$GITHUB_ENV"
       - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && steps.host.outcome == 'success' && inputs.scope == 'host' }}
         run: npm run ci:host -- --probe=${{ inputs.probe }}
       - if: ${{ !cancelled() && steps.artifact.outcome == 'success' && inputs.scope == 'package' }}

@@ -106,7 +106,6 @@ test('release gate requires all 14 exact-commit rows and the actual qualified ar
       ['darwin', 'x64'],
       ['linux', 'x64'],
       ['linux', 'arm64'],
-      ['win32', 'x64'],
     ]) {
       for (const node of ['v22.16.0', 'v24.21.0']) {
         const path = join(dir, 'evidence', `${platform}-${arch}-${node}.json`);

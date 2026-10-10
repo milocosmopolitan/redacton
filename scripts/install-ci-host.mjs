@@ -22,10 +22,6 @@ const pins = {
     'b4f8a4a7a43b53ff1cd639d83bd070e8af8725d9cb51abd257a9c611ce6c7274',
     244819072,
   ],
-  'win32-x64': [
-    '1f6471eb5a1c21a1f8b54a7827329d64433424dcce51717a54e837adb542163a',
-    256155808,
-  ],
 };
 const key = `${process.platform}-${process.arch}`;
 const pin = pins[key];
@@ -33,7 +29,7 @@ if (!pin || !process.argv[2])
   throw new Error('HOST_PIN_OR_DESTINATION_UNAVAILABLE');
 const destination = resolve(process.argv[2]);
 await mkdir(destination, { recursive: true });
-const binary = process.platform === 'win32' ? 'claude.exe' : 'claude';
+const binary = 'claude';
 const path = join(destination, binary);
 const partial = `${path}.partial`;
 try {

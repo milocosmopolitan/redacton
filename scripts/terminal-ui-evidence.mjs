@@ -187,140 +187,10 @@ export function terminalUiFrame(value) {
   return value;
 }
 
-const ptyPhases = new Set([
-  'API_SETUP',
-  'ARGUMENT',
-  'CREATE_PIPE',
-  'CREATE_CONSOLE',
-  'ATTRIBUTE',
-  'CREATE_JOB',
-  'CREATE_PROCESS',
-  'ASSIGN_JOB',
-  'RESUME',
-  'OUTPUT_LIMIT',
-  'WRITE',
-  'POLL',
-  'CLEANUP',
-  'TEST',
-]);
-export function windowsPtyState(value) {
-  const numeric = (value) =>
-    value === null ||
-    (Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff);
-  return keys(value, 'code,hresult,phase,win32') &&
-    value.code === 'WINDOWS_PTY_STATE' &&
-    ptyPhases.has(value.phase) &&
-    numeric(value.win32) &&
-    numeric(value.hresult)
-    ? value
-    : null;
-}
-export function windowsPtyChild(value) {
-  const count = (value) =>
-    Number.isSafeInteger(value) && value >= 0 && value <= 65536;
-  const tokens = [
-    'setting-sources',
-    'permission-mode',
-    'git-bash',
-    'bash.exe',
-    'CLAUDE_CODE_GIT_BASH_PATH',
-  ];
-  return keys(
-    value,
-    'bytes,category,code,controlSequences,exitCode,tokens,visibleCharacters',
-  ) &&
-    value.code === 'WINDOWS_PTY_CHILD' &&
-    (value.exitCode === null ||
-      (Number.isSafeInteger(value.exitCode) &&
-        value.exitCode >= 0 &&
-        value.exitCode <= 0xffffffff)) &&
-    count(value.bytes) &&
-    count(value.visibleCharacters) &&
-    count(value.controlSequences) &&
-    [
-      'NO_OUTPUT',
-      'CONTROL_ONLY',
-      'UNKNOWN_OUTPUT',
-      'COMMAND_LINE',
-      'SHELL',
-      'HOME',
-      'ENVIRONMENT',
-      'AUTH',
-      'CONSOLE',
-      'LOADER',
-      'PLUGIN',
-      'RUNTIME',
-    ].includes(value.category) &&
-    Array.isArray(value.tokens) &&
-    value.tokens.length <= tokens.length &&
-    new Set(value.tokens).size === value.tokens.length &&
-    value.tokens.every((token) => tokens.includes(token))
-    ? value
-    : null;
-}
-export function windowsPtySelftest(value) {
-  const flags = [
-    'argvCorrect',
-    'stdinTty',
-    'stdoutTty',
-    'stderrTty',
-    'stderrCaptured',
-    'dimensionsCorrect',
-    'inputEcho',
-  ];
-  return keys(
-    value,
-    'argvCorrect,code,columns,dimensionsCorrect,inputEcho,stderrCaptured,stderrTty,stdinTty,stdoutTty',
-  ) &&
-    value.code === 'WINDOWS_PTY_SELFTEST' &&
-    [140, 80].includes(value.columns) &&
-    flags.every((key) => value[key] === null || typeof value[key] === 'boolean')
-    ? value
-    : null;
-}
-export function windowsPtyChildState(value) {
-  const flags = [
-    'exactArgv',
-    'stdinStream',
-    'stdoutStream',
-    'stderrStream',
-    'stdinTty',
-    'stdoutTty',
-    'stderrTty',
-  ];
-  const phases = [
-    'UNOBSERVED',
-    'STARTUP',
-    'ARGV',
-    'STDIO',
-    'DIMENSIONS',
-    'INPUT',
-    'COMPLETE',
-  ];
-  return keys(
-    value,
-    'code,columns,errno,exactArgv,exceptionPhase,phase,sidechannelValid,startupReached,stderrStream,stderrTty,stdinStream,stdinTty,stdoutStream,stdoutTty',
-  ) &&
-    value.code === 'WINDOWS_PTY_CHILD_STATE' &&
-    [140, 80].includes(value.columns) &&
-    typeof value.sidechannelValid === 'boolean' &&
-    typeof value.startupReached === 'boolean' &&
-    flags.every(
-      (key) => value[key] === null || typeof value[key] === 'boolean',
-    ) &&
-    phases.includes(value.phase) &&
-    ['NONE', ...phases.slice(1)].includes(value.exceptionPhase) &&
-    (value.errno === null ||
-      (Number.isSafeInteger(value.errno) &&
-        value.errno >= 0 &&
-        value.errno <= 0xffffffff))
-    ? value
-    : null;
-}
 export function terminalUiBootstrap(value) {
   return keys(value, 'code,exception,exitCode,passed,phase,timedOut') &&
     value.code === 'TERMINAL_UI_BOOTSTRAP' &&
-    ['observer', 'conpty'].includes(value.phase) &&
+    value.phase === 'observer' &&
     typeof value.passed === 'boolean' &&
     typeof value.timedOut === 'boolean' &&
     (value.exitCode === null ||
@@ -339,24 +209,6 @@ export function terminalUiBootstrap(value) {
     ? value
     : null;
 }
-export function windowsPtyDiagnostics(stdout) {
-  const output = [];
-  for (const line of stdout.split('\n')) {
-    if (line.length > 4096) continue;
-    try {
-      const parsed = JSON.parse(line);
-      const value =
-        windowsPtyState(parsed) ??
-        windowsPtyChild(parsed) ??
-        windowsPtySelftest(parsed) ??
-        windowsPtyChildState(parsed);
-      if (value) output.push(value);
-    } catch {}
-    if (output.length === 8) break;
-  }
-  return output;
-}
-
 export function terminalUiDiagnostics(stdout) {
   const output = [];
   for (const line of stdout.split('\n')) {
@@ -369,15 +221,7 @@ export function terminalUiDiagnostics(stdout) {
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
     const keys = Object.keys(value).sort().join(',');
-    if (windowsPtyState(value)) {
-      output.push(windowsPtyState(value));
-    } else if (windowsPtyChild(value)) {
-      output.push(windowsPtyChild(value));
-    } else if (windowsPtySelftest(value)) {
-      output.push(windowsPtySelftest(value));
-    } else if (windowsPtyChildState(value)) {
-      output.push(windowsPtyChildState(value));
-    } else if (terminalUiBootstrap(value)) {
+    if (terminalUiBootstrap(value)) {
       output.push(terminalUiBootstrap(value));
     } else if (terminalUiFrame(value)) {
       output.push(terminalUiFrame(value));

@@ -17,7 +17,7 @@ const value = () => ({
   attestationSha256: 'c'.repeat(64),
   overrides: [
     {
-      platform: 'win32',
+      platform: 'linux',
       arch: 'x64',
       node: 'v22.16.0',
       gates: ['terminal-ui'],
