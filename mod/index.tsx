@@ -67,7 +67,15 @@ interface Runtime {
   checkPromise: Promise<void> | null;
   healthRevision: string;
   healthEpoch: number;
+  // Bounded automatic scanner recovery after a transient resource failure.
+  transientFailedAt: number | null;
+  autoAttempts: number;
+  lastAutoAttemptAt: number | null;
 }
+// Two self-checks at most per failure episode, 3 s and then 10 s after the
+// previous failure; anything else needs an explicit /redacton.
+const AUTO_RECOVERY_DELAYS_MS = [3000, 10000] as const;
+const TRANSIENT_SCANNER_CODES = new Set(['TIMEOUT', 'HELPER_UNAVAILABLE']);
 interface OperationSlot {
   captured: OperationSnapshot;
   config: ActiveConfiguration;
@@ -120,6 +128,7 @@ async function runHelper(
         runtime.healthEpoch += 1;
         runtime.observedAt = Date.now();
         setReadiness(controller, 'unavailable');
+        await noteScannerFailure($, runtime, response.errorCode);
       }
       $.ui.invalidate('ui.render');
     }
@@ -135,6 +144,7 @@ async function runHelper(
         runtime.healthEpoch += 1;
         setReadiness(controller, 'unavailable');
         runtime.observedAt = Date.now();
+        await noteScannerFailure($, runtime, 'HELPER_UNAVAILABLE');
       }
       $.ui.invalidate('ui.render');
     }
@@ -184,6 +194,7 @@ async function checkReadiness(
       controller,
       response.status === 'ok' ? 'ready' : 'unavailable',
     );
+    if (response.status === 'ok') clearAutoRecovery(runtime);
     runtime.observedAt = Date.now();
     $.ui.invalidate('ui.render');
   })();
@@ -193,6 +204,77 @@ async function checkReadiness(
   } finally {
     if (runtime.checkPromise === work) runtime.checkPromise = null;
   }
+}
+
+// An unreadable host clock disables automatic recovery; protection stays withheld.
+async function hostNow($: EngineInterface): Promise<number | null> {
+  try {
+    const value = await $.clock.now();
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function noteScannerFailure(
+  $: EngineInterface,
+  runtime: Runtime,
+  code: string,
+): Promise<void> {
+  const failedAt = TRANSIENT_SCANNER_CODES.has(code) ? await hostNow($) : null;
+  if (failedAt === null) {
+    runtime.transientFailedAt = null;
+    return;
+  }
+  if (runtime.transientFailedAt === null) {
+    runtime.autoAttempts = 0;
+    runtime.lastAutoAttemptAt = null;
+  }
+  runtime.transientFailedAt = failedAt;
+}
+
+function clearAutoRecovery(runtime: Runtime): void {
+  runtime.transientFailedAt = null;
+  runtime.autoAttempts = 0;
+  runtime.lastAutoAttemptAt = null;
+}
+
+// Runs at operation start, before the operation snapshots readiness. Never for
+// OFF, settings failures, deterministic scanner faults or while another recovery
+// or check is in flight; operations between attempts stay withheld.
+async function autoRecover(
+  $: EngineInterface,
+  controller: SessionState,
+  owner: ConfigController,
+  runtime: Runtime,
+): Promise<void> {
+  if (
+    !controller.requestedProtection ||
+    controller.readiness !== 'unavailable' ||
+    runtime.personalLoad !== 'ready' ||
+    runtime.recoveryPromise ||
+    runtime.checkPromise ||
+    runtime.transientFailedAt === null
+  )
+    return;
+  const delay = AUTO_RECOVERY_DELAYS_MS[runtime.autoAttempts];
+  if (delay === undefined) return;
+  const anchor =
+    runtime.autoAttempts === 0
+      ? runtime.transientFailedAt
+      : (runtime.lastAutoAttemptAt ?? runtime.transientFailedAt);
+  const current = await hostNow($);
+  if (current === null || current - anchor < delay) return;
+  // The clock read yielded; re-check that nothing started recovery meanwhile.
+  if (
+    controller.readiness !== 'unavailable' ||
+    runtime.recoveryPromise ||
+    runtime.checkPromise
+  )
+    return;
+  runtime.autoAttempts += 1;
+  runtime.lastAutoAttemptAt = current;
+  await checkReadiness($, controller, runtime, owner.snapshot());
 }
 
 async function runSettings(
@@ -436,6 +518,9 @@ export function register(on: On) {
     checkPromise: null,
     healthRevision: '',
     healthEpoch: 0,
+    transientFailedAt: null,
+    autoAttempts: 0,
+    lastAutoAttemptAt: null,
   };
   let config = new ConfigController();
   let form: RuleForm = freshForm();
@@ -457,6 +542,7 @@ export function register(on: On) {
     runtime.checkPromise = null;
     runtime.healthRevision = '';
     runtime.healthEpoch += 1;
+    clearAutoRecovery(runtime);
     runtime.personalLoad = 'pending';
     runtime.settingsCode = '';
     const controller = state;
@@ -497,6 +583,7 @@ export function register(on: On) {
     runtime.checkPromise = null;
     runtime.healthRevision = '';
     runtime.healthEpoch += 1;
+    clearAutoRecovery(runtime);
     runtime.personalLoad = 'pending';
     runtime.settingsCode = '';
     paneOpen = false;
@@ -531,6 +618,8 @@ export function register(on: On) {
     const owner = config;
     if (!runtime.recoveryPromise) {
       if (runtime.personalLoad === 'failed') runtime.personalLoad = 'pending';
+      runtime.autoAttempts = 0;
+      runtime.lastAutoAttemptAt = null;
       setReadiness(controller, 'loading');
       const generation = runtime.generation;
       const work = (async () => {
@@ -1933,6 +2022,7 @@ export function register(on: On) {
       return { drop: 'REDACTON_LOCAL_COMMAND_UNAVAILABLE' };
     const controller = state;
     const owner = config;
+    await autoRecover($, controller, owner, runtime);
     const generation = runtime.generation;
     const captured = snapshot(controller);
     if (captured.requestedProtection && runtime.recoveryPromise)
@@ -1981,6 +2071,7 @@ export function register(on: On) {
   on('tool.call', { tool: ['Read', 'Bash'] }, async ($, e, next) => {
     const controller = state;
     const owner = config;
+    await autoRecover($, controller, owner, runtime);
     const generation = runtime.generation;
     const captured = snapshot(controller);
     if (captured.requestedProtection && runtime.recoveryPromise)
@@ -2030,7 +2121,7 @@ export function register(on: On) {
       ? '⚠ Redacton OFF — credential protection disabled'
       : state.readiness === 'ready'
         ? 'Redacton ON · Protect ready · Partial coverage'
-        : `Redacton ON · Protect ${state.readiness} · Selected content withheld`;
+        : `Redacton ON · Protect ${state.readiness} · Selected content withheld${state.readiness === 'unavailable' ? ' · run /redacton to retry' : ''}`;
     const recent = state.recent[state.recent.length - 1];
     const metadata =
       recent && recent.errorCode !== 'SCANNED'

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added bounded automatic scanner recovery: after a transient helper timeout or process failure, the next operation runs up to two self-checks (3 s, then 10 s after the previous failure) instead of staying unavailable until `/redacton`. Deterministic faults, OFF and settings failures still require explicit recovery; the unavailable indicator now says `run /redacton to retry`.
 - Removed native Windows from host qualification: the Windows ConPTY harness, its diagnostics and tests, the Windows-only cancellation driver, and the `win32-x64` release-gate row. The PowerShell installer and Windows package CI remain as an unqualified candidate. Release gates now require 8 actual-host rows.
 - Removed the WSL2 qualification harness, release-gate rows and external-row attestations; WSL is documented as having no qualification path. Qualification hosts reject WSL instead of recording it as Linux.
 - Added coalesced same-session settings/scanner recovery through `/redacton`, preserving approved configuration and rejecting stale readiness writes.

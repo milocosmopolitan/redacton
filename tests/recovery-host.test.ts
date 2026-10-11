@@ -1,5 +1,5 @@
 import type { On } from 'claude-code';
-import { expect, test } from 'claude-code/testing';
+import { expect, mock, test } from 'claude-code/testing';
 import {
   deferred,
   localCommand,
@@ -37,6 +37,8 @@ function fixture(on: On) {
   const control = {
     settingsFault: '',
     scanFault: '',
+    scanDeny: false,
+    checkFault: '',
     loads: 0,
     checks: 0,
     scans: 0,
@@ -91,6 +93,8 @@ function fixture(on: On) {
       control.scans++;
       control.revisions.push(request.config?.revision ?? '');
     }
+    if (request.operation === 'sanitize' && control.scanDeny)
+      return { deny: 'SYNTHETIC_PROCESS_FAILURE' };
     const capturedFault = control.scanFault;
     if (request.operation === 'sanitize' && control.scanGate) {
       const gate = control.scanGate;
@@ -98,18 +102,23 @@ function fixture(on: On) {
       control.scanBegan?.resolve();
       await gate.promise;
     }
-    const response =
-      request.operation === 'sanitize' && capturedFault
-        ? {
-            protocolVersion: 2,
-            requestId: request.requestId,
-            configRevision: request.config?.revision,
-            engineVersion: '0.1.0-beta.14',
-            policyId: 'credentials-alpha1',
-            status: 'failed',
-            errorCode: capturedFault,
-          }
-        : syntheticResponse(request);
+    const failure =
+      request.operation === 'sanitize'
+        ? capturedFault
+        : request.operation === 'self-check'
+          ? control.checkFault
+          : '';
+    const response = failure
+      ? {
+          protocolVersion: 2,
+          requestId: request.requestId,
+          configRevision: request.config?.revision,
+          engineVersion: '0.1.0-beta.14',
+          policyId: 'credentials-alpha1',
+          status: 'failed',
+          errorCode: failure,
+        }
+      : syntheticResponse(request);
     return {
       value: {
         exitCode: 0,
@@ -289,4 +298,105 @@ test('concurrent successful scan cannot clear another operation systemic failure
   expect((await $.command.run(localCommand('redact:status'))).text).toContain(
     'Protect unavailable',
   );
+});
+
+// Automatic recovery is deliberately small: transient resource failures only,
+// two self-checks per episode, never for OFF, and only at operation start.
+for (const fault of ['TIMEOUT', 'HELPER_UNAVAILABLE'] as const) {
+  test(`${fault} recovers automatically once on the first operation after the delay`, async ($, on) => {
+    {
+      const clock = mock.clock(on);
+      const f = fixture(on);
+      await $.session.start(start);
+      if (fault === 'TIMEOUT') f.scanFault = 'TIMEOUT';
+      else f.scanDeny = true;
+      expect((await $.prompt.submit(prompt)).drop).toBe(fault);
+      f.scanFault = '';
+      f.scanDeny = false;
+      expect((await $.prompt.submit(prompt)).drop).toBe('REDACTON_UNAVAILABLE');
+      expect(f.checks).toBe(1);
+      await clock.advance(3000);
+      expect((await $.prompt.submit(prompt)).text).toBe('SANITIZED');
+      expect(f.checks).toBe(2);
+      expect((await $.prompt.submit(prompt)).text).toBe('SANITIZED');
+      expect(f.checks).toBe(2);
+      expect(f.delivered).toBe(2);
+    }
+  });
+}
+test('automatic recovery stops after two attempts and an explicit /redacton restores the budget', async ($, on) => {
+  {
+    const clock = mock.clock(on);
+    const f = fixture(on);
+    await $.session.start(start);
+    f.scanFault = 'TIMEOUT';
+    expect((await $.prompt.submit(prompt)).drop).toBe('TIMEOUT');
+    f.scanFault = '';
+    f.checkFault = 'TIMEOUT';
+    await clock.advance(3000);
+    expect((await $.prompt.submit(prompt)).drop).toBe('REDACTON_UNAVAILABLE');
+    expect(f.checks).toBe(2);
+    expect((await $.prompt.submit(prompt)).drop).toBe('REDACTON_UNAVAILABLE');
+    expect(f.checks).toBe(2);
+    await clock.advance(10000);
+    expect((await $.prompt.submit(prompt)).drop).toBe('REDACTON_UNAVAILABLE');
+    expect(f.checks).toBe(3);
+    await clock.advance(3_600_000);
+    expect((await $.prompt.submit(prompt)).drop).toBe('REDACTON_UNAVAILABLE');
+    expect(f.checks).toBe(3);
+    f.checkFault = '';
+    await $.command.run(localCommand('redacton'));
+    expect(f.checks).toBe(4);
+    expect((await $.prompt.submit(prompt)).text).toBe('SANITIZED');
+    expect(f.delivered).toBe(1);
+  }
+});
+test('deterministic scanner faults and OFF never recover automatically', async ($, on) => {
+  {
+    const clock = mock.clock(on);
+    const f = fixture(on);
+    await $.session.start(start);
+    f.scanFault = 'ENGINE_FAILURE';
+    expect((await $.prompt.submit(prompt)).drop).toBe('ENGINE_FAILURE');
+    f.scanFault = '';
+    await clock.advance(3_600_000);
+    expect((await $.prompt.submit(prompt)).drop).toBe('REDACTON_UNAVAILABLE');
+    expect(f.checks).toBe(1);
+    await $.command.run(localCommand('redacton'));
+    f.scanFault = 'TIMEOUT';
+    expect((await $.prompt.submit(prompt)).drop).toBe('TIMEOUT');
+    f.scanFault = '';
+    await $.command.run(localCommand('redactoff'));
+    await clock.advance(3_600_000);
+    const scans = f.scans;
+    expect((await $.prompt.submit(prompt)).text).toBe('SYNTHETIC_RAW');
+    expect(f.checks).toBe(2);
+    expect(f.scans).toBe(scans);
+  }
+});
+test('a Bash call after the delay recovers a transient failure before its operation snapshot', async ($, on) => {
+  {
+    const clock = mock.clock(on);
+    const f = fixture(on);
+    on('tool.call', () => ({
+      result: { stdout: 'SYNTHETIC_RAW', stderr: '', interrupted: false },
+    }));
+    await $.session.start(start);
+    f.scanFault = 'TIMEOUT';
+    expect((await $.prompt.submit(prompt)).drop).toBe('TIMEOUT');
+    f.scanFault = '';
+    const blocked = await $.tool.call({
+      tool: 'Bash',
+      command: 'synthetic-command',
+    });
+    expect(blocked.deny).toBe('REDACTON_UNAVAILABLE');
+    expect(f.checks).toBe(1);
+    await clock.advance(3000);
+    const recovered = await $.tool.call({
+      tool: 'Bash',
+      command: 'synthetic-command',
+    });
+    expect(recovered.deny).toBeUndefined();
+    expect(f.checks).toBe(2);
+  }
 });

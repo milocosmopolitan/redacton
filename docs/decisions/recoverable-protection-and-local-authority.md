@@ -7,8 +7,14 @@ status: accepted
 
 Failed settings loading must be recoverable within the session, while selected ON
 content remains withheld until approved settings and scanner readiness are valid.
-Use one explicit, coalesced `/redacton` attempt, not an automatic retry loop or
-empty/default substitution. Bind asynchronous activation and health observations
+Use one explicit, coalesced `/redacton` attempt, not an unbounded retry loop or
+empty/default substitution. One narrow, amended exception covers a transient
+scanner resource failure (helper `TIMEOUT` or process failure): the next selected
+operation may run at most two bounded self-checks per failure episode, at least
+3 s and then at least 10 s after the previous failure, before it snapshots
+readiness. It never runs for OFF, settings failures or deterministic scanner
+faults, uses the host clock (unreadable means no attempt), shares the explicit
+recovery's coalescing, and operations between attempts stay withheld. Bind asynchronous activation and health observations
 to session generation, immutable configuration revision and health epoch. OFF and
 session reset invalidate stale activation; successful scans do not clear a
 systemic failure. Invalid saved settings require deliberate local repair/reset.
@@ -16,8 +22,9 @@ systemic failure. Invalid saved settings require deliberate local repair/reset.
 Classify only validated fixed codes for a known operation. Sanitize limits,
 private-key/custom-rule blocking, cancellation, queue saturation and unsupported
 extraction refuse the affected event without poisoning scanner health. Engine,
-configuration, helper, protocol and timeout failures require an explicit bounded
-self-check. An arbitrary exception string is never evidence of harmlessness.
+configuration, helper, protocol and timeout failures require a bounded
+self-check: explicit, or the limited automatic attempts above for transient
+resource failures. An arbitrary exception string is never evidence of harmlessness.
 Management validation errors remain separate from an already approved revision.
 
 Disabling protection and opening mutation controls require the host-stamped local
